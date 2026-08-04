@@ -32,6 +32,9 @@ function saveData(data) {
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
+// Mappa per associare il numero di telefono al socket.id attivo
+let userSockets = {};
+
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
 
@@ -42,7 +45,16 @@ io.on('connection', (socket) => {
             db.users.push(userData);
             saveData(db);
         }
+        userSockets[userData.phone] = socket.id;
         socket.emit('registration_success', userData);
+    });
+
+    // Registra il numero anche al caricamento iniziale se l'utente ha già fatto login
+    socket.on('get_initial_data', (userPhone) => {
+        userSockets[userPhone] = socket.id;
+        let db = loadData();
+        const userContacts = db.contacts.filter(c => c.ownerPhone === userPhone);
+        socket.emit('initial_data', { contacts: userContacts, messages: db.messages });
     });
 
     socket.on('add_contact', (contactData) => {
@@ -61,39 +73,53 @@ io.on('connection', (socket) => {
         io.emit('receive_message', msgData);
     });
 
-    socket.on('get_initial_data', (userPhone) => {
-        let db = loadData();
-        const userContacts = db.contacts.filter(c => c.ownerPhone === userPhone);
-        socket.emit('initial_data', { contacts: userContacts, messages: db.messages });
-    });
-
-    // --- Gestione Segnalazione WebRTC per Chiamate Audio/Video ---
+    // --- Gestione Segnalazione WebRTC Mirata per Numero ---
     socket.on('call_user', (data) => {
-        io.emit('incoming_call', {
-            fromPhone: data.fromPhone,
-            fromName: data.fromName,
-            toPhone: data.toPhone,
-            signal: data.signal,
-            callType: data.callType // 'audio' o 'video'
-        });
+        let targetSocketId = userSockets[data.toPhone];
+        if (targetSocketId) {
+            io.to(targetSocketId).emit('incoming_call', {
+                fromPhone: data.fromPhone,
+                fromName: data.fromName,
+                toPhone: data.toPhone,
+                signal: data.signal,
+                callType: data.callType
+            });
+        }
     });
 
     socket.on('answer_call', (data) => {
-        io.emit('call_accepted', {
-            toPhone: data.toPhone,
-            signal: data.signal
-        });
+        let targetSocketId = userSockets[data.toPhone];
+        if (targetSocketId) {
+            io.to(targetSocketId).emit('call_accepted', {
+                signal: data.signal
+            });
+        }
     });
 
     socket.on('ice_candidate', (data) => {
-        io.emit('ice_candidate', {
-            toPhone: data.toPhone,
-            signal: data.signal
-        });
+        let targetSocketId = userSockets[data.toPhone];
+        if (targetSocketId) {
+            io.to(targetSocketId).emit('ice_candidate', {
+                signal: data.signal
+            });
+        }
     });
 
     socket.on('hang_up', (data) => {
-        io.emit('call_ended', { toPhone: data.toPhone });
+        let targetSocketId = userSockets[data.toPhone];
+        if (targetSocketId) {
+            io.to(targetSocketId).emit('call_ended');
+        }
+    });
+
+    socket.on('disconnect', () => {
+        for (let phone in userSockets) {
+            if (userSockets[phone] === socket.id) {
+                delete userSockets[phone];
+                break;
+            }
+        }
+        console.log('Utente disconnesso:', socket.id);
     });
 });
 
