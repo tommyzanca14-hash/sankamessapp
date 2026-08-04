@@ -8,6 +8,12 @@
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
         body { background-color: #f0f2f5; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         
+        /* Schermata di Registrazione */
+        #register-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: white; z-index: 2000; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px; }
+        #register-screen h2 { margin-bottom: 20px; color: #007bff; }
+        #register-screen input { width: 100%; max-width: 300px; padding: 10px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 5px; }
+        #register-screen button { width: 100%; max-width: 300px; padding: 10px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
+
         /* Contenitore delle sezioni */
         .content-section { display: none; flex: 1; overflow-y: auto; padding-bottom: 70px; }
         .content-section.active { display: flex; flex-direction: column; }
@@ -23,116 +29,218 @@
         .chat-header input { width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 20px; outline: none; }
         .chat-subbar { display: flex; justify-content: space-between; padding: 10px 15px; background: #fafafa; font-size: 14px; color: #333; border-bottom: 1px solid #eee; }
         .chat-list { flex: 1; overflow-y: auto; background: white; }
-        .chat-item { padding: 12px 15px; border-bottom: 1px solid #f0f0f0; display: flex; align-items: center; cursor: pointer; }
+        .chat-item { padding: 12px 15px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
         .chat-item:hover { background: #f9f9f9; }
 
-        /* Stili generici per le altre sezioni */
+        /* Finestra della chat attiva */
+        #active-chat-window { display: none; flex-direction: column; height: 100vh; position: fixed; top: 0; left: 0; width: 100%; background: white; z-index: 1500; }
+        .active-chat-header { padding: 15px; background: #007bff; color: white; display: flex; align-items: center; gap: 15px; font-weight: bold; }
+        .active-chat-messages { flex: 1; padding: 15px; overflow-y: auto; background: #e5ddd5; display: flex; flex-direction: column; gap: 10px; }
+        .message-bubble { max-width: 70%; padding: 10px; border-radius: 8px; font-size: 14px; }
+        .message-bubble.sent { background: #dcf8c6; align-self: flex-end; }
+        .message-bubble.received { background: white; align-self: flex-start; }
+        .active-chat-input { padding: 10px; background: #f0f0f0; display: flex; gap: 10px; }
+        .active-chat-input input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 20px; outline: none; }
+        .active-chat-input button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 20px; cursor: pointer; }
+
         .section-header { padding: 15px; background: white; font-size: 18px; font-weight: bold; border-bottom: 1px solid #ddd; }
         .p-15 { padding: 15px; }
     </style>
 </head>
 <body>
 
+    <!-- SCHERMATA DI REGISTRAZIONE -->
+    <div id="register-screen">
+        <h2>Benvenuto su Sanka</h2>
+        <p style="margin-bottom: 15px; color: #666; font-size: 14px; text-align: center;">Inserisci i tuoi dati per iniziare</p>
+        <input type="text" id="reg-name" placeholder="Il tuo Nome">
+        <input type="tel" id="reg-phone" placeholder="Numero di Telefono">
+        <input type="email" id="reg-email" placeholder="Indirizzo Email">
+        <button onclick="registerUser()">Registrati ed entra</button>
+    </div>
+
+    <!-- FINESTRA CHIAVE PER SCRIVERE AD UN AMICO -->
+    <div id="active-chat-window">
+        <div class="active-chat-header">
+            <button onclick="closeChat()" style="background:none; border:none; color:white; font-size:18px; cursor:pointer;">⬅ Indietro</button>
+            <span id="chat-partner-name">Nome Amico</span>
+        </div>
+        <div class="active-chat-messages" id="messages-box">
+            <!-- I messaggi compaiono qui -->
+        </div>
+        <div class="active-chat-input">
+            <input type="text" id="message-input" placeholder="Scrivi un messaggio...">
+            <button onclick="sendMessage()">Invia</button>
+        </div>
+    </div>
+
     <!-- 1. SEZIONE MESSAGGI E CHAT -->
     <div id="section-chats" class="content-section active">
         <div class="chat-header">
-            <input type="text" id="search-chats" placeholder="Cerca tra le chat...">
+            <input type="text" id="search-chats" placeholder="Cerca tra le chat..." oninput="filterChats()">
         </div>
         <div class="chat-subbar">
             <span id="contacts-count">Contatti memorizzati: 0</span>
-            <button id="sort-toggle-btn" style="background:none; border:none; color:#007bff; cursor:pointer; font-weight:bold;">Ordine Alfabetico</button>
+            <button onclick="toggleSort()" id="sort-btn" style="background:none; border:none; color:#007bff; cursor:pointer; font-weight:bold;">Ordine Alfabetico</button>
         </div>
         <div class="chat-list" id="chat-list-container">
-            <!-- Le chat verranno caricate qui -->
-            <div class="chat-item">Nessuna chat attiva</div>
+            <!-- Le chat dei contatti appariranno qui -->
         </div>
     </div>
 
-    <!-- 2. SEZIONE CHIAMATE E VIDEOCHIAMATE -->
+    <!-- 2. SEZIONE CHIAMATE -->
     <div id="section-calls" class="content-section">
         <div class="section-header">Chiamate e Videochiamate (Fino a 64 partecipanti)</div>
         <div class="p-15">
-            <p style="color: #666; margin-bottom: 15px;">Registro delle chiamate effettuate tramite numero di telefono e mail.</p>
-            <button style="padding: 10px 15px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer;">Avvia Nuova Chiamata di Gruppo</button>
+            <button style="padding: 10px 15px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer;">Avvia Nuova Chiamata</button>
         </div>
     </div>
 
-    <!-- 3. SEZIONE AGGIUNGI (+): Gestita via popup/schermata -->
+    <!-- 3. SEZIONE AGGIUNGI (+): Per aggiungere amici -->
     <div id="section-add" class="content-section">
-        <div class="section-header">Aggiungi Contatti o Gruppi</div>
+        <div class="section-header">Aggiungi Contatto</div>
         <div class="p-15">
-            <div style="display: flex; flex-direction: column; gap: 10px;">
-                <input type="text" placeholder="Nome contatto" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-                <input type="text" placeholder="Numero di telefono" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-                <input type="email" placeholder="Email" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-                <button style="padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Salva Contatto</button>
-                <hr style="margin: 10px 0;">
-                <button style="padding: 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Crea Nuovo Gruppo</button>
+            <div style="display: flex; flex-direction: column; gap: 10px; background:white; padding:15px; border-radius:8px; border:1px solid #ddd;">
+                <input type="text" id="new-contact-name" placeholder="Nome dell'amico" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                <input type="text" id="new-contact-phone" placeholder="Numero di telefono" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                <button onclick="addContact()" style="padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Aggiungi alla rubrica</button>
             </div>
         </div>
     </div>
 
-    <!-- 4. SEZIONE SOCIAL (Storie 24h e Feed Post Foto/Video) -->
+    <!-- 4. SEZIONE SOCIAL -->
     <div id="section-social" class="content-section">
-        <div class="section-header">Social & Aggiornamenti</div>
-        <div style="padding: 10px; background: white; border-bottom: 1px solid #ddd; overflow-x: auto; display: flex; gap: 10px;">
-            <!-- Storie 24h -->
-            <div style="min-width: 60px; height: 60px; background: #ddd; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #555; text-align: center;">La tua storia</div>
-        </div>
-        <div id="feed-container" class="p-15" style="display: flex; flex-direction: column; gap: 15px;">
-            <!-- Feed di foto o video scrollabile -->
-            <div style="background: white; border: 1px solid #ddd; border-radius: 8px; padding: 10px;">
-                <p style="font-weight: bold; margin-bottom: 5px;">Nome Utente</p>
-                <div style="width: 100%; height: 200px; background: #000; display: flex; align-items: center; justify-content: center; color: white;">Foto / Video Post</div>
-                <p style="margin-top: 5px; font-size: 14px;">Questo è un post visibile solo alle persone che hanno il tuo numero.</p>
-            </div>
-        </div>
+        <div class="section-header">Social & Storie (24h)</div>
+        <div class="p-15"><p>Feed post e storie delle persone con il tuo numero.</p></div>
     </div>
 
     <!-- 5. SEZIONE PROFILO -->
     <div id="section-profile" class="content-section">
-        <div class="section-header">Il Mio Profilo & Impostazioni</div>
-        <div class="p-15" style="display: flex; flex-direction: column; gap: 15px;">
-            <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #ddd;">
-                <h3>Impostazioni Account</h3>
-                <p style="font-size: 13px; color: #666; margin-top: 5px;">Gestisci email, numero di telefono e preferenze dell'app.</p>
-            </div>
-            <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #ddd;">
-                <h3>I Miei Contenuti Caricati</h3>
-                <p style="font-size: 13px; color: #666; margin-top: 5px;">Post, video e storie attive con relativi like e commenti.</p>
-            </div>
+        <div class="section-header">Il Mio Profilo</div>
+        <div class="p-15">
+            <p id="profile-info">Nome: - | Tel: -</p>
         </div>
     </div>
 
-    <!-- BARRA DI NAVIGAZIONE IN BASSO A 5 TASTI -->
+    <!-- BARRA DI NAVIGAZIONE A 5 TASTI -->
     <nav class="bottom-nav">
-        <button class="nav-item active" onclick="switchTab('chats', this)">
-            <span>💬</span>Chat
-        </button>
-        <button class="nav-item" onclick="switchTab('calls', this)">
-            <span>📞</span>Chiamate
-        </button>
-        <button class="nav-item" onclick="switchTab('add', this)">
-            <span>➕</span>Aggiungi
-        </button>
-        <button class="nav-item" onclick="switchTab('social', this)">
-            <span>🌐</span>Social
-        </button>
-        <button class="nav-item" onclick="switchTab('profile', this)">
-            <span>👤</span>Profilo
-        </button>
+        <button class="nav-item active" onclick="switchTab('chats', this)"><span>💬</span>Chat</button>
+        <button class="nav-item" onclick="switchTab('calls', this)"><span>📞</span>Chiamate</button>
+        <button class="nav-item" onclick="switchTab('add', this)"><span>➕</span>Aggiungi</button>
+        <button class="nav-item" onclick="switchTab('social', this)"><span>🌐</span>Social</button>
+        <button class="nav-item" onclick="switchTab('profile', this)"><span>👤</span>Profilo</button>
     </nav>
 
     <script>
+        let currentUser = null;
+        let contacts = [];
+        let currentChatContact = null;
+        let isAlphabetical = false;
+
+        function registerUser() {
+            const name = document.getElementById('reg-name').value;
+            const phone = document.getElementById('reg-phone').value;
+            const email = document.getElementById('reg-email').value;
+
+            if(!name || !phone || !email) {
+                alert('Per favore compila tutti i campi (Nome, Telefono, Email).');
+                return;
+            }
+
+            currentUser = { name, phone, email };
+            document.getElementById('profile-info').innerText = `Nome: ${name} | Tel: ${phone} | Email: ${email}`;
+            document.getElementById('register-screen').style.display = 'none';
+        }
+
         function switchTab(tabName, element) {
-            // Nascondi tutte le sezioni
             document.querySelectorAll('.content-section').forEach(sec => sec.classList.remove('active'));
-            // Rimuovi classe active dai bottoni
             document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
-            
-            // Mostra la sezione scelta e attiva il bottone
             document.getElementById('section-' + tabName).classList.add('active');
             element.classList.add('active');
+        }
+
+        function addContact() {
+            const name = document.getElementById('new-contact-name').value;
+            const phone = document.getElementById('new-contact-phone').value;
+
+            if(!name || !phone) {
+                alert('Inserisci nome e numero di telefono del contatto.');
+                return;
+            }
+
+            contacts.push({ name, phone, messages: [] });
+            document.getElementById('new-contact-name').value = '';
+            document.getElementById('new-contact-phone').value = '';
+            
+            updateContactsDisplay();
+            alert('Contatto aggiunto con successo!');
+            switchTab('chats', document.querySelectorAll('.nav-item')[0]);
+        }
+
+        function updateContactsDisplay() {
+            const container = document.getElementById('chat-list-container');
+            document.getElementById('contacts-count').innerText = `Contatti memorizzati: ${contacts.length}`;
+            
+            if(contacts.length === 0) {
+                container.innerHTML = '<div class="chat-item">Nessuna chat attiva. Aggiungi un amico dal tasto [+]</div>';
+                return;
+            }
+
+            let displayList = [...contacts];
+            if(isAlphabetical) {
+                displayList.sort((a, b) => a.name.localeCompare(b.name));
+            }
+
+            container.innerHTML = '';
+            displayList.forEach(contact => {
+                const div = document.createElement('div');
+                div.className = 'chat-item';
+                div.innerHTML = `<span><b>${contact.name}</b> (${contact.phone})</span> <span style="color:#007bff; font-size:12px;">Scrivi ➡</span>`;
+                div.onclick = () => openChat(contact);
+                container.appendChild(div);
+            });
+        }
+
+        function toggleSort() {
+            isAlphabetical = !isAlphabetical;
+            document.getElementById('sort-btn').innerText = isAlphabetical ? "Ordine Cronologico" : "Ordine Alfabetico";
+            updateContactsDisplay();
+        }
+
+        function openChat(contact) {
+            currentChatContact = contact;
+            document.getElementById('chat-partner-name').innerText = contact.name;
+            renderMessages();
+            document.getElementById('active-chat-window').style.display = 'flex';
+        }
+
+        function closeChat() {
+            document.getElementById('active-chat-window').style.display = 'none';
+            currentChatContact = null;
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('message-input');
+            const text = input.value.trim();
+            if(!text || !currentChatContact) return;
+
+            currentChatContact.messages.push({ sender: 'me', text: text });
+            input.value = '';
+            renderMessages();
+        }
+
+        function renderMessages() {
+            const box = document.getElementById('messages-box');
+            box.innerHTML = '';
+            if(!currentChatContact) return;
+
+            currentChatContact.messages.forEach(msg => {
+                const bubble = document.createElement('div');
+                bubble.className = 'message-bubble sent';
+                bubble.innerText = msg.text;
+                box.appendChild(bubble);
+            });
+            box.scrollTop = box.scrollHeight;
         }
     </script>
 </body>
