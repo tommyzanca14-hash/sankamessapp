@@ -35,7 +35,6 @@ function saveData(data) {
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
 
-    // Registrazione o Login utente
     socket.on('register_user', (userData) => {
         let db = loadData();
         let existingUser = db.users.find(u => u.phone === userData.phone);
@@ -46,28 +45,23 @@ io.on('connection', (socket) => {
         socket.emit('registration_success', userData);
     });
 
-    // Aggiungi un contatto SOLO nella rubrica personale dell'utente
     socket.on('add_contact', (contactData) => {
         let db = loadData();
-        // contactData contiene: { ownerPhone, name, phone }
         db.contacts.push(contactData);
         saveData(db);
 
-        // Invia i contatti aggiornati SOLO a chi appartengono
         const userContacts = db.contacts.filter(c => c.ownerPhone === contactData.ownerPhone);
         socket.emit('update_contacts', userContacts);
     });
 
-    // Invio messaggio
     socket.on('send_message', (msgData) => {
         let db = loadData();
         db.messages.push(msgData);
         saveData(db);
-        // Notifica tutti (utile per aggiornare le chat in tempo reale)
+        // Invia il messaggio a tutti così il destinatario lo riceve in tempo reale
         io.emit('receive_message', msgData);
     });
 
-    // Richiesta dati iniziali filtrati per l'utente specifico
     socket.on('get_initial_data', (userPhone) => {
         let db = loadData();
         const userContacts = db.contacts.filter(c => c.ownerPhone === userPhone);
