@@ -449,8 +449,6 @@
                 localVideo.srcObject = localStream;
 
                 createPeerConnection();
-                
-                // Aggiunge tracce corrette
                 localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
                 const offer = await peerConnection.createOffer();
@@ -484,8 +482,6 @@
                 localVideo.srcObject = localStream;
 
                 createPeerConnection();
-                
-                // Aggiunge tracce corrette
                 localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingCallData.signal));
@@ -518,15 +514,11 @@
                 }
             };
 
-            // MODIFICA CRUCIALE: Gestione sicura del flusso remoto (video e audio insieme)
             peerConnection.ontrack = (event) => {
                 const remoteVideo = document.getElementById('remote-video');
-                
-                // Se arriva un flusso stream, lo colleghi direttamente
                 if (event.streams && event.streams[0]) {
                     remoteVideo.srcObject = event.streams[0];
                 } else {
-                    // Fallback se il browser invia le tracce singolarmente
                     let inboundStream = remoteVideo.srcObject;
                     if (!inboundStream) {
                         inboundStream = new MediaStream();
@@ -534,8 +526,6 @@
                     }
                     inboundStream.addTrack(event.track);
                 }
-
-                // Forza l'aggiornamento dello stato visivo
                 document.getElementById('call-status-text').innerText = "Connesso";
             };
         }
