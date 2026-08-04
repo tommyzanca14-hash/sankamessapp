@@ -130,6 +130,14 @@
             }
         };
 
+        socket.on('registration_success', (userData) => {
+            currentUser = userData;
+            localStorage.setItem('sanka_user', JSON.stringify(currentUser));
+            document.getElementById('profile-info').innerText = `Nome: ${currentUser.name} | Tel: ${currentUser.phone} | Email: ${currentUser.email}`;
+            document.getElementById('register-screen').style.display = 'none';
+            socket.emit('get_initial_data', currentUser.phone);
+        });
+
         socket.on('initial_data', (data) => {
             contacts = data.contacts || [];
             messages = data.messages || [];
@@ -158,13 +166,8 @@
                 return;
             }
 
-            currentUser = { name, phone, email };
-            localStorage.setItem('sanka_user', JSON.stringify(currentUser));
-            socket.emit('register_user', currentUser);
-            
-            document.getElementById('profile-info').innerText = `Nome: ${name} | Tel: ${phone} | Email: ${email}`;
-            document.getElementById('register-screen').style.display = 'none';
-            socket.emit('get_initial_data', currentUser.phone);
+            const userData = { name, phone, email };
+            socket.emit('register_user', userData);
         }
 
         function switchTab(tabName, element) {
@@ -176,7 +179,7 @@
 
         function addContact() {
             const name = document.getElementById('new-contact-name').value;
-            const phone = document.getElementById('new-contact-phone'].value; // Corretto
+            const phone = document.getElementById('new-contact-phone').value;
             if(!name || !phone) return;
 
             const contactData = { ownerPhone: currentUser.phone, name, phone };
