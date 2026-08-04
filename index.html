@@ -40,11 +40,11 @@
         .active-chat-input input { flex: 1; padding: 10px 15px; border: 1px solid #ccc; border-radius: 20px; outline: none; font-size: 16px; background: white; }
         .active-chat-input button { padding: 10px 18px; background: #007bff; color: white; border: none; border-radius: 20px; cursor: pointer; font-weight: bold; font-size: 14px; }
 
-        /* Finestra Call */
+        /* Finestra Call / Videochiamata */
         #call-window { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #111; z-index: 3000; flex-direction: column; justify-content: space-between; align-items: center; padding: 20px; color: white; }
-        .call-videos { width: 100%; flex: 1; display: flex; position: relative; justify-content: center; align-items: center; }
+        .call-videos { width: 100%; flex: 1; display: flex; position: relative; justify-content: center; align-items: center; overflow: hidden; }
         #remote-video { width: 100%; height: 100%; object-fit: cover; background: #222; border-radius: 10px; }
-        #local-video { position: absolute; bottom: 20px; right: 20px; width: 100px; height: 150px; object-fit: cover; border-radius: 8px; border: 2px solid white; background: #000; }
+        #local-video { position: absolute; bottom: 20px; right: 20px; width: 90px; height: 130px; object-fit: cover; border-radius: 8px; border: 2px solid white; background: #000; }
         .call-controls { display: flex; gap: 20px; padding: 20px; }
         .call-btn { padding: 15px 25px; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; font-size: 16px; }
         .btn-hangup { background: #dc3545; color: white; }
@@ -65,7 +65,7 @@
         <button onclick="registerUser()">Registrati ed entra</button>
     </div>
 
-    <!-- Schermata Chiamata in Corso -->
+    <!-- Schermata Chiamata / Videochiamata -->
     <div id="call-window">
         <div style="text-align: center; margin-top: 10px;">
             <h3 id="call-status-text">Chiamata in corso...</h3>
@@ -184,7 +184,6 @@
             console.log("Connesso al server con numero:", phone);
         });
 
-        // Gestione Salvataggio Locale (localStorage)
         function loadLocalStorageData() {
             if(!currentUser) return;
             let savedContacts = localStorage.getItem('sanka_contacts_' + currentUser.phone);
@@ -205,11 +204,10 @@
 
         socket.on('receive_message', (msg) => {
             if(!currentUser) return;
-            // Salva il messaggio solo se riguarda l'utente corrente
             if(msg.senderPhone === currentUser.phone || msg.receiverPhone === currentUser.phone) {
-                // Evita duplicati
-                let exists = messages.some(m => m.senderPhone === msg.senderPhone && m.receiverPhone === msg.receiverPhone && m.text === msg.text);
+                let exists = messages.some(m => m.senderPhone === msg.senderPhone && m.receiverPhone === msg.receiverPhone && m.text === msg.text && Math.abs((m.time || 0) - (msg.time || 0)) < 2000);
                 if(!exists) {
+                    msg.time = msg.time || Date.now();
                     messages.push(msg);
                     saveMessagesToLocalStorage();
                     updateContactsDisplay();
@@ -220,7 +218,7 @@
             }
         });
 
-        // --- WebRTC ---
+        // --- WebRTC (Chiamate e Video) ---
         socket.on('incoming_call', (data) => {
             if(!currentUser || data.toPhone !== currentUser.phone) return;
             incomingCallData = data;
@@ -230,11 +228,18 @@
             document.getElementById('call-window').style.display = 'flex';
         });
 
+        socket.on('call_failed', (data) => {
+            alert(data.reason);
+            closeCallWindow();
+        });
+
         socket.on('call_accepted', async (data) => {
             if(peerConnection) {
-                const remoteDesc = new RTCSessionDescription(data.signal);
-                await peerConnection.setRemoteDescription(remoteDesc);
-                document.getElementById('call-status-text').innerText = "Chiamata in corso";
+                try {
+                    const remoteDesc = new RTCSessionDescription(data.signal);
+                    await peerConnection.setRemoteDescription(remoteDesc);
+                    document.getElementById('call-status-text').innerText = "Chiamata in corso";
+                } catch(e) { console.error("Errore setRemoteDescription:", e); }
             }
         });
 
@@ -242,7 +247,7 @@
             if(peerConnection && data.signal) {
                 try {
                     await peerConnection.addIceCandidate(new RTCIceCandidate(data.signal));
-                } catch(e) { console.error(e); }
+                } catch(e) { console.error("Errore aggiunta ICE candidate:", e); }
             }
         });
 
@@ -274,7 +279,6 @@
             const phone = document.getElementById('new-contact-phone').value;
             if(!name || !phone) return;
 
-            // Evita duplicati in rubrica
             let existing = contacts.find(c => c.phone === phone);
             if(existing) {
                 existing.name = name;
@@ -385,7 +389,8 @@
             const msgData = {
                 senderPhone: currentUser.phone,
                 receiverPhone: currentChatContact.phone,
-                text: text
+                text: text,
+                time: Date.now()
             };
 
             socket.emit('send_message', msgData);
@@ -414,16 +419,19 @@
         async function startCall(callType) {
             if(!currentChatContact) return;
             document.getElementById('call-partner-label').innerText = `A: ${currentChatContact.name} (${currentChatContact.phone})`;
-            document.getElementById('call-status-text').innerText = "Chiamata in corso...";
+            document.getElementById('call-status-text').innerText = "Connessione in corso...";
             document.getElementById('answer-call-btn').style.display = 'none';
             document.getElementById('call-window').style.display = 'flex';
 
             try {
+                // Richiede audio e video in base alla chiamata con constraints sicuri per mobile
                 localStream = await navigator.mediaDevices.getUserMedia({ 
                     audio: true, 
-                    video: callType === 'video' 
+                    video: callType === 'video' ? { width: { ideal: 640 }, height: { ideal: 480 } } : false 
                 });
-                document.getElementById('local-video').srcObject = localStream;
+                
+                const localVideo = document.getElementById('local-video');
+                localVideo.srcObject = localStream;
 
                 createPeerConnection();
                 localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
@@ -439,7 +447,8 @@
                     callType: callType
                 });
             } catch (err) {
-                alert("Impossibile accedere a microfono/fotocamera.");
+                console.error("Errore accesso media:", err);
+                alert("Impossibile accedere a microfono o fotocamera. Assicurati di aver concesso i permessi nel browser.");
                 closeCallWindow();
             }
         }
@@ -451,9 +460,11 @@
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ 
                     audio: true, 
-                    video: incomingCallData.callType === 'video' 
+                    video: incomingCallData.callType === 'video' ? { width: { ideal: 640 }, height: { ideal: 480 } } : false 
                 });
-                document.getElementById('local-video').srcObject = localStream;
+                
+                const localVideo = document.getElementById('local-video');
+                localVideo.srcObject = localStream;
 
                 createPeerConnection();
                 localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
@@ -467,7 +478,8 @@
                     signal: answer
                 });
             } catch (err) {
-                alert("Errore nell'accettare la chiamata.");
+                console.error("Errore accettazione chiamata:", err);
+                alert("Errore nell'avviare i flussi multimediali.");
                 closeCallWindow();
             }
         }
@@ -488,7 +500,10 @@
             };
 
             peerConnection.ontrack = (event) => {
-                document.getElementById('remote-video').srcObject = event.streams[0];
+                const remoteVideo = document.getElementById('remote-video');
+                if(remoteVideo.srcObject !== event.streams[0]) {
+                    remoteVideo.srcObject = event.streams[0];
+                }
             };
         }
 
