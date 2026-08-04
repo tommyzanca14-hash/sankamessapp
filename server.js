@@ -1,115 +1,83 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const cors = require('cors');
-const path = require('path');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-app.use(express.static(path.join(__dirname)));
-
 const server = http.createServer(app);
-const io = new Server(server, {
-    cors: { origin: "*", methods: ["GET", "POST"] }
-});
+const io = new Server(server);
 
-let userSockets = {};
-let offlineMessages = {}; // { phone: [ {senderPhone, receiverPhone, text, timestamp} ] }
+app.use(express.static('public'));
+
+// Mappa per associare il numero di telefono al socket.id corrente
+const users = {};
 
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
 
+    // Registrazione dell'utente tramite numero di telefono
     socket.on('register_user', (userData) => {
-        userSockets[userData.phone] = socket.id;
+        users[userData.phone] = socket.id;
+        socket.phone = userData.phone;
+        console.log(`Utente registrato: ${userData.name} (${userData.phone}) -> Socket ID: ${socket.id}`);
         socket.emit('registration_success', userData);
-        deliverOfflineMessages(userData.phone, socket);
     });
 
     socket.on('login_user', (phone) => {
-        userSockets[phone] = socket.id;
+        users[phone] = socket.id;
+        socket.phone = phone;
+        console.log(`Login utente con numero: ${phone} -> Socket ID: ${socket.id}`);
         socket.emit('login_success', phone);
-        deliverOfflineMessages(phone, socket);
     });
 
-    socket.on('send_message', (msgData) => {
-        let targetSocketId = userSockets[msgData.receiverPhone];
+    // Gestione messaggi (con supporto offline)
+    socket.on('send_message', (msg) => {
+        console.log(`Messaggio da ${msg.senderPhone} a ${msg.receiverPhone}: ${msg.text}`);
+        const receiverSocketId = users[msg.receiverPhone];
         
-        if (targetSocketId) {
-            // Se l'utente è online, invia subito
-            io.to(targetSocketId).emit('receive_message', msgData);
-        } else {
-            // Se è offline, salviamo in coda
-            if (!offlineMessages[msgData.receiverPhone]) {
-                offlineMessages[msgData.receiverPhone] = [];
-            }
-            offlineMessages[msgData.receiverPhone].push(msgData);
-            console.log(`Messaggio messo in coda per l'utente offline: ${msgData.receiverPhone}`);
+        // Se il destinatario è online, invia subito il messaggio
+        if (receiverSocketId) {
+            io.to(receiverSocketId).emit('receive_message', msg);
         }
-        
-        // Invia conferma anche al mittente
-        socket.emit('receive_message', msgData);
+        // Rimbalza il messaggio anche al mittente per sincronizzare le chat
+        socket.emit('receive_message', msg);
     });
 
-    function deliverOfflineMessages(phone, socket) {
-        if (offlineMessages[phone] && offlineMessages[phone].length > 0) {
-            console.log(`Consegna di ${offlineMessages[phone].length} messaggi offline a ${phone}`);
-            offlineMessages[phone].forEach(msg => {
-                socket.emit('receive_message', msg);
-            });
-            delete offlineMessages[phone]; // Svuota la coda dopo la consegna
-        }
-    }
-
-    // --- Gestione WebRTC (Chiamate e Videochiamate) ---
+    // --- Segnalazione WebRTC per Chiamate e Videochiamate ---
     socket.on('call_user', (data) => {
-        let targetSocketId = userSockets[data.toPhone];
-        if (targetSocketId) {
-            io.to(targetSocketId).emit('incoming_call', {
-                fromPhone: data.fromPhone,
-                fromName: data.fromName,
-                toPhone: data.toPhone,
-                signal: data.signal,
-                callType: data.callType
-            });
+        const calleeSocketId = users[data.toPhone];
+        if (calleeSocketId) {
+            io.to(calleeSocketId).emit('incoming_call', data);
         } else {
-            socket.emit('call_failed', { reason: "L'utente non è online o irraggiungibile." });
+            socket.emit('call_failed', { reason: "L'utente chiamato non è online o irraggiungibile." });
         }
     });
 
     socket.on('answer_call', (data) => {
-        let targetSocketId = userSockets[data.toPhone];
-        if (targetSocketId) {
-            io.to(targetSocketId).emit('call_accepted', {
-                signal: data.signal
-            });
+        const callerSocketId = users[data.toPhone];
+        if (callerSocketId) {
+            io.to(callerSocketId).emit('call_accepted', data);
         }
     });
 
     socket.on('ice_candidate', (data) => {
-        let targetSocketId = userSockets[data.toPhone];
+        const targetSocketId = users[data.toPhone];
         if (targetSocketId) {
-            io.to(targetSocketId).emit('ice_candidate', {
-                signal: data.signal
-            });
+            io.to(targetSocketId).emit('ice_candidate', data);
         }
     });
 
     socket.on('hang_up', (data) => {
-        let targetSocketId = userSockets[data.toPhone];
+        const targetSocketId = users[data.toPhone];
         if (targetSocketId) {
-            io.to(targetSocketId).emit('call_ended');
+            io.to(targetSocketId).emit('call_ended', data);
         }
     });
 
     socket.on('disconnect', () => {
-        for (let phone in userSockets) {
-            if (userSockets[phone] === socket.id) {
-                delete userSockets[phone];
-                break;
-            }
+        if (socket.phone && users[socket.phone] === socket.id) {
+            delete users[socket.phone];
+            console.log(`Utente con telefono ${socket.phone} disconnesso.`);
         }
-        console.log('Utente disconnesso:', socket.id);
     });
 });
 
