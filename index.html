@@ -162,41 +162,67 @@
             const savedUser = localStorage.getItem('sanka_user');
             if(savedUser) {
                 currentUser = JSON.parse(savedUser);
+                loadLocalStorageData();
                 document.getElementById('profile-info').innerText = `Nome: ${currentUser.name} | Tel: ${currentUser.phone} | Email: ${currentUser.email}`;
                 document.getElementById('register-screen').style.display = 'none';
-                socket.emit('get_initial_data', currentUser.phone);
+                socket.emit('login_user', currentUser.phone);
+                updateContactsDisplay();
             }
         };
 
         socket.on('registration_success', (userData) => {
             currentUser = userData;
             localStorage.setItem('sanka_user', JSON.stringify(userData));
+            loadLocalStorageData();
             document.getElementById('profile-info').innerText = `Nome: ${currentUser.name} | Tel: ${currentUser.phone} | Email: ${currentUser.email}`;
             document.getElementById('register-screen').style.display = 'none';
-            socket.emit('get_initial_data', currentUser.phone);
-        });
-
-        socket.on('initial_data', (data) => {
-            contacts = data.contacts || [];
-            messages = data.messages || [];
+            socket.emit('login_user', currentUser.phone);
             updateContactsDisplay();
         });
 
-        socket.on('update_contacts', (newContacts) => {
-            contacts = newContacts;
-            updateContactsDisplay();
+        socket.on('login_success', (phone) => {
+            console.log("Connesso al server con numero:", phone);
         });
+
+        // Gestione Salvataggio Locale (localStorage)
+        function loadLocalStorageData() {
+            if(!currentUser) return;
+            let savedContacts = localStorage.getItem('sanka_contacts_' + currentUser.phone);
+            let savedMessages = localStorage.getItem('sanka_messages_' + currentUser.phone);
+            contacts = savedContacts ? JSON.parse(savedContacts) : [];
+            messages = savedMessages ? JSON.parse(savedMessages) : [];
+        }
+
+        function saveContactsToLocalStorage() {
+            if(!currentUser) return;
+            localStorage.setItem('sanka_contacts_' + currentUser.phone, JSON.stringify(contacts));
+        }
+
+        function saveMessagesToLocalStorage() {
+            if(!currentUser) return;
+            localStorage.setItem('sanka_messages_' + currentUser.phone, JSON.stringify(messages));
+        }
 
         socket.on('receive_message', (msg) => {
-            messages.push(msg);
-            updateContactsDisplay();
-            if(currentChatContact && (msg.senderPhone === currentChatContact.phone || msg.receiverPhone === currentChatContact.phone)) {
-                renderMessages();
+            if(!currentUser) return;
+            // Salva il messaggio solo se riguarda l'utente corrente
+            if(msg.senderPhone === currentUser.phone || msg.receiverPhone === currentUser.phone) {
+                // Evita duplicati
+                let exists = messages.some(m => m.senderPhone === msg.senderPhone && m.receiverPhone === msg.receiverPhone && m.text === msg.text);
+                if(!exists) {
+                    messages.push(msg);
+                    saveMessagesToLocalStorage();
+                    updateContactsDisplay();
+                    if(currentChatContact && (msg.senderPhone === currentChatContact.phone || msg.receiverPhone === currentChatContact.phone)) {
+                        renderMessages();
+                    }
+                }
             }
         });
 
-        // --- Gestione WebRTC mirata ---
+        // --- WebRTC ---
         socket.on('incoming_call', (data) => {
+            if(!currentUser || data.toPhone !== currentUser.phone) return;
             incomingCallData = data;
             document.getElementById('call-partner-label').innerText = `Da: ${data.fromName} (${data.fromPhone})`;
             document.getElementById('call-status-text').innerText = data.callType === 'video' ? "Videochiamata in arrivo..." : "Chiamata audio in arrivo...";
@@ -248,8 +274,16 @@
             const phone = document.getElementById('new-contact-phone').value;
             if(!name || !phone) return;
 
-            const contactData = { ownerPhone: currentUser.phone, name, phone };
-            socket.emit('add_contact', contactData);
+            // Evita duplicati in rubrica
+            let existing = contacts.find(c => c.phone === phone);
+            if(existing) {
+                existing.name = name;
+            } else {
+                contacts.push({ name, phone });
+            }
+
+            saveContactsToLocalStorage();
+            updateContactsDisplay();
 
             document.getElementById('new-contact-name').value = '';
             document.getElementById('new-contact-phone').value = '';
@@ -322,8 +356,14 @@
             let customName = prompt("Inserisci il nome per questo contatto:", currentChatContact.phone);
             if(!customName) return;
 
-            const contactData = { ownerPhone: currentUser.phone, name: customName, phone: currentChatContact.phone };
-            socket.emit('add_contact', contactData);
+            let existing = contacts.find(c => c.phone === currentChatContact.phone);
+            if(existing) {
+                existing.name = customName;
+            } else {
+                contacts.push({ name: customName, phone: currentChatContact.phone });
+            }
+
+            saveContactsToLocalStorage();
 
             currentChatContact.name = customName;
             currentChatContact.isSaved = true;
@@ -452,8 +492,6 @@
             };
         }
 
-        function endCard() { endCall(); }
-
         function endCall() {
             let targetPhone = currentChatContact ? currentChatContact.phone : (incomingCallData ? incomingCallData.fromPhone : null);
             if(targetPhone) {
@@ -464,7 +502,6 @@
 
         function closeCallWindow() {
             if(localStream) {
-                localStream.getTracks().format = null; // pulizia tracce
                 localStream.getTracks().forEach(track => track.stop());
             }
             if(peerConnection) {
