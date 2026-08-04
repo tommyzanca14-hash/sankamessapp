@@ -156,7 +156,15 @@
         let peerConnection;
         let localStream;
         let incomingCallData = null;
-        const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        
+        // Configurazione STUN multipla aggiornata
+        const rtcConfig = { 
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' }
+            ] 
+        };
 
         window.onload = () => {
             const savedUser = localStorage.getItem('sanka_user');
@@ -424,7 +432,6 @@
             document.getElementById('call-window').style.display = 'flex';
 
             try {
-                // Richiede audio e video in base alla chiamata con constraints sicuri per mobile
                 localStream = await navigator.mediaDevices.getUserMedia({ 
                     audio: true, 
                     video: callType === 'video' ? { width: { ideal: 640 }, height: { ideal: 480 } } : false 
