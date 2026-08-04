@@ -3,7 +3,6 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const path = require('path');
-const fs = require('fs');
 
 const app = express();
 app.use(cors());
@@ -15,65 +14,31 @@ const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-const DB_FILE = path.join(__dirname, 'database.json');
-
-function loadData() {
-    if (fs.existsSync(DB_FILE)) {
-        try {
-            return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-        } catch (e) {
-            return { users: [], contacts: [], messages: [] };
-        }
-    }
-    return { users: [], contacts: [], messages: [] };
-}
-
-function saveData(data) {
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
-}
-
-// Mappa per associare il numero di telefono al socket.id attivo
 let userSockets = {};
 
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
 
     socket.on('register_user', (userData) => {
-        let db = loadData();
-        let existingUser = db.users.find(u => u.phone === userData.phone);
-        if (!existingUser) {
-            db.users.push(userData);
-            saveData(db);
-        }
         userSockets[userData.phone] = socket.id;
         socket.emit('registration_success', userData);
     });
 
-    // Registra il numero anche al caricamento iniziale se l'utente ha già fatto login
-    socket.on('get_initial_data', (userPhone) => {
-        userSockets[userPhone] = socket.id;
-        let db = loadData();
-        const userContacts = db.contacts.filter(c => c.ownerPhone === userPhone);
-        socket.emit('initial_data', { contacts: userContacts, messages: db.messages });
-    });
-
-    socket.on('add_contact', (contactData) => {
-        let db = loadData();
-        db.contacts.push(contactData);
-        saveData(db);
-
-        const userContacts = db.contacts.filter(c => c.ownerPhone === contactData.ownerPhone);
-        socket.emit('update_contacts', userContacts);
+    socket.on('login_user', (phone) => {
+        userSockets[phone] = socket.id;
+        socket.emit('login_success', phone);
     });
 
     socket.on('send_message', (msgData) => {
-        let db = loadData();
-        db.messages.push(msgData);
-        saveData(db);
-        io.emit('receive_message', msgData);
+        // Invia il messaggio sia al mittente che al destinatario in tempo reale
+        let targetSocketId = userSockets[msgData.receiverPhone];
+        if (targetSocketId) {
+            io.to(targetSocketId).emit('receive_message', msgData);
+        }
+        socket.emit('receive_message', msgData);
     });
 
-    // --- Gestione Segnalazione WebRTC Mirata per Numero ---
+    // --- Gestione Segnalazione WebRTC ---
     socket.on('call_user', (data) => {
         let targetSocketId = userSockets[data.toPhone];
         if (targetSocketId) {
