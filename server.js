@@ -58,7 +58,6 @@ io.on('connection', (socket) => {
         let db = loadData();
         db.messages.push(msgData);
         saveData(db);
-        // Invia il messaggio a tutti così il destinatario lo riceve in tempo reale
         io.emit('receive_message', msgData);
     });
 
@@ -66,6 +65,35 @@ io.on('connection', (socket) => {
         let db = loadData();
         const userContacts = db.contacts.filter(c => c.ownerPhone === userPhone);
         socket.emit('initial_data', { contacts: userContacts, messages: db.messages });
+    });
+
+    // --- Gestione Segnalazione WebRTC per Chiamate Audio/Video ---
+    socket.on('call_user', (data) => {
+        io.emit('incoming_call', {
+            fromPhone: data.fromPhone,
+            fromName: data.fromName,
+            toPhone: data.toPhone,
+            signal: data.signal,
+            callType: data.callType // 'audio' o 'video'
+        });
+    });
+
+    socket.on('answer_call', (data) => {
+        io.emit('call_accepted', {
+            toPhone: data.toPhone,
+            signal: data.signal
+        });
+    });
+
+    socket.on('ice_candidate', (data) => {
+        io.emit('ice_candidate', {
+            toPhone: data.toPhone,
+            signal: data.signal
+        });
+    });
+
+    socket.on('hang_up', (data) => {
+        io.emit('call_ended', { toPhone: data.toPhone });
     });
 });
 
