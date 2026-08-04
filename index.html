@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sanka Messaggi</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f0f2f5; margin: 0; padding: 20px; display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; }
+        #chat { flex: 1; background: white; border-radius: 8px; padding: 15px; overflow-y: auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 15px; }
+        .message { margin-bottom: 10px; padding: 8px 12px; background: #e1ffc7; border-radius: 6px; width: fit-content; max-width: 80%; }
+        .input-container { display: flex; gap: 10px; }
+        input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; }
+        button { padding: 10px 20px; background: #0084ff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <h2>Sanka Chat</h2>
+    <div id="chat"></div>
+
+    <div class="input-container">
+        <input type="text" id="messageInput" placeholder="Scrivi un messaggio...">
+        <button onclick="sendMessage()">Invia</button>
+    </div>
+
+    <!-- Libreria Socket.io -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            if (input.value.trim() !== '') {
+                socket.emit('send_message', input.value);
+                input.value = '';
+            }
+        }
+
+        socket.addEventListener('receive_message', (data) => {
+            const chat = document.getElementById('chat');
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'message';
+            msgDiv.textContent = data;
+            chat.appendChild(msgDiv);
+            chat.scrollTop = chat.scrollHeight;
+        });
+    </script>
+
+</body>
+</html>
