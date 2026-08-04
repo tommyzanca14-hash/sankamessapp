@@ -5,46 +5,135 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sanka Messaggi</title>
     <style>
-        body { font-family: Arial, sans-serif; background: #f0f2f5; margin: 0; padding: 20px; display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; }
-        #chat { flex: 1; background: white; border-radius: 8px; padding: 15px; overflow-y: auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 15px; }
-        .message { margin-bottom: 10px; padding: 8px 12px; background: #e1ffc7; border-radius: 6px; width: fit-content; max-width: 80%; }
-        .input-container { display: flex; gap: 10px; }
-        input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; }
-        button { padding: 10px 20px; background: #0084ff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
+        body { background-color: #f0f2f5; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        
+        /* Contenitore delle sezioni */
+        .content-section { display: none; flex: 1; overflow-y: auto; padding-bottom: 70px; }
+        .content-section.active { display: flex; flex-direction: column; }
+
+        /* Stile barra in basso */
+        .bottom-nav { position: fixed; bottom: 0; left: 0; width: 100%; height: 60px; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; align-items: center; z-index: 1000; }
+        .nav-item { background: none; border: none; font-size: 12px; display: flex; flex-direction: column; align-items: center; cursor: pointer; color: #555; }
+        .nav-item.active { color: #007bff; }
+        .nav-item span { font-size: 20px; margin-bottom: 2px; }
+
+        /* Sezione Chat */
+        .chat-header { padding: 15px; background: white; border-bottom: 1px solid #ddd; }
+        .chat-header input { width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 20px; outline: none; }
+        .chat-subbar { display: flex; justify-content: space-between; padding: 10px 15px; background: #fafafa; font-size: 14px; color: #333; border-bottom: 1px solid #eee; }
+        .chat-list { flex: 1; overflow-y: auto; background: white; }
+        .chat-item { padding: 12px 15px; border-bottom: 1px solid #f0f0f0; display: flex; align-items: center; cursor: pointer; }
+        .chat-item:hover { background: #f9f9f9; }
+
+        /* Stili generici per le altre sezioni */
+        .section-header { padding: 15px; background: white; font-size: 18px; font-weight: bold; border-bottom: 1px solid #ddd; }
+        .p-15 { padding: 15px; }
     </style>
 </head>
 <body>
 
-    <h2>Sanka Chat</h2>
-    <div id="chat"></div>
-
-    <div class="input-container">
-        <input type="text" id="messageInput" placeholder="Scrivi un messaggio...">
-        <button onclick="sendMessage()">Invia</button>
+    <!-- 1. SEZIONE MESSAGGI E CHAT -->
+    <div id="section-chats" class="content-section active">
+        <div class="chat-header">
+            <input type="text" id="search-chats" placeholder="Cerca tra le chat...">
+        </div>
+        <div class="chat-subbar">
+            <span id="contacts-count">Contatti memorizzati: 0</span>
+            <button id="sort-toggle-btn" style="background:none; border:none; color:#007bff; cursor:pointer; font-weight:bold;">Ordine Alfabetico</button>
+        </div>
+        <div class="chat-list" id="chat-list-container">
+            <!-- Le chat verranno caricate qui -->
+            <div class="chat-item">Nessuna chat attiva</div>
+        </div>
     </div>
 
-    <!-- Libreria Socket.io -->
-    <script src="/socket.io/socket.io.js"></script>
+    <!-- 2. SEZIONE CHIAMATE E VIDEOCHIAMATE -->
+    <div id="section-calls" class="content-section">
+        <div class="section-header">Chiamate e Videochiamate (Fino a 64 partecipanti)</div>
+        <div class="p-15">
+            <p style="color: #666; margin-bottom: 15px;">Registro delle chiamate effettuate tramite numero di telefono e mail.</p>
+            <button style="padding: 10px 15px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer;">Avvia Nuova Chiamata di Gruppo</button>
+        </div>
+    </div>
+
+    <!-- 3. SEZIONE AGGIUNGI (+): Gestita via popup/schermata -->
+    <div id="section-add" class="content-section">
+        <div class="section-header">Aggiungi Contatti o Gruppi</div>
+        <div class="p-15">
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+                <input type="text" placeholder="Nome contatto" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                <input type="text" placeholder="Numero di telefono" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                <input type="email" placeholder="Email" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                <button style="padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Salva Contatto</button>
+                <hr style="margin: 10px 0;">
+                <button style="padding: 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Crea Nuovo Gruppo</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. SEZIONE SOCIAL (Storie 24h e Feed Post Foto/Video) -->
+    <div id="section-social" class="content-section">
+        <div class="section-header">Social & Aggiornamenti</div>
+        <div style="padding: 10px; background: white; border-bottom: 1px solid #ddd; overflow-x: auto; display: flex; gap: 10px;">
+            <!-- Storie 24h -->
+            <div style="min-width: 60px; height: 60px; background: #ddd; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #555; text-align: center;">La tua storia</div>
+        </div>
+        <div id="feed-container" class="p-15" style="display: flex; flex-direction: column; gap: 15px;">
+            <!-- Feed di foto o video scrollabile -->
+            <div style="background: white; border: 1px solid #ddd; border-radius: 8px; padding: 10px;">
+                <p style="font-weight: bold; margin-bottom: 5px;">Nome Utente</p>
+                <div style="width: 100%; height: 200px; background: #000; display: flex; align-items: center; justify-content: center; color: white;">Foto / Video Post</div>
+                <p style="margin-top: 5px; font-size: 14px;">Questo è un post visibile solo alle persone che hanno il tuo numero.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 5. SEZIONE PROFILO -->
+    <div id="section-profile" class="content-section">
+        <div class="section-header">Il Mio Profilo & Impostazioni</div>
+        <div class="p-15" style="display: flex; flex-direction: column; gap: 15px;">
+            <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #ddd;">
+                <h3>Impostazioni Account</h3>
+                <p style="font-size: 13px; color: #666; margin-top: 5px;">Gestisci email, numero di telefono e preferenze dell'app.</p>
+            </div>
+            <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #ddd;">
+                <h3>I Miei Contenuti Caricati</h3>
+                <p style="font-size: 13px; color: #666; margin-top: 5px;">Post, video e storie attive con relativi like e commenti.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- BARRA DI NAVIGAZIONE IN BASSO A 5 TASTI -->
+    <nav class="bottom-nav">
+        <button class="nav-item active" onclick="switchTab('chats', this)">
+            <span>💬</span>Chat
+        </button>
+        <button class="nav-item" onclick="switchTab('calls', this)">
+            <span>📞</span>Chiamate
+        </button>
+        <button class="nav-item" onclick="switchTab('add', this)">
+            <span>➕</span>Aggiungi
+        </button>
+        <button class="nav-item" onclick="switchTab('social', this)">
+            <span>🌐</span>Social
+        </button>
+        <button class="nav-item" onclick="switchTab('profile', this)">
+            <span>👤</span>Profilo
+        </button>
+    </nav>
+
     <script>
-        const socket = io();
-
-        function sendMessage() {
-            const input = document.getElementById('messageInput');
-            if (input.value.trim() !== '') {
-                socket.emit('send_message', input.value);
-                input.value = '';
-            }
+        function switchTab(tabName, element) {
+            // Nascondi tutte le sezioni
+            document.querySelectorAll('.content-section').forEach(sec => sec.classList.remove('active'));
+            // Rimuovi classe active dai bottoni
+            document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
+            
+            // Mostra la sezione scelta e attiva il bottone
+            document.getElementById('section-' + tabName).classList.add('active');
+            element.classList.add('active');
         }
-
-        socket.addEventListener('receive_message', (data) => {
-            const chat = document.getElementById('chat');
-            const msgDiv = document.createElement('div');
-            msgDiv.className = 'message';
-            msgDiv.textContent = data;
-            chat.appendChild(msgDiv);
-            chat.scrollTop = chat.scrollHeight;
-        });
     </script>
-
 </body>
 </html>
