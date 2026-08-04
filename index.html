@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Sanka Messaggi</title>
+    <title>Sanka Messaggi & Chiamate</title>
     <script src="/socket.io/socket.io.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
@@ -40,6 +40,16 @@
         .active-chat-input input { flex: 1; padding: 10px 15px; border: 1px solid #ccc; border-radius: 20px; outline: none; font-size: 16px; background: white; }
         .active-chat-input button { padding: 10px 18px; background: #007bff; color: white; border: none; border-radius: 20px; cursor: pointer; font-weight: bold; font-size: 14px; }
 
+        /* Finestra Call */
+        #call-window { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #111; z-index: 3000; flex-direction: column; justify-content: space-between; align-items: center; padding: 20px; color: white; }
+        .call-videos { width: 100%; flex: 1; display: flex; position: relative; justify-content: center; align-items: center; }
+        #remote-video { width: 100%; height: 100%; object-fit: cover; background: #222; border-radius: 10px; }
+        #local-video { position: absolute; bottom: 20px; right: 20px; width: 100px; height: 150px; object-fit: cover; border-radius: 8px; border: 2px solid white; background: #000; }
+        .call-controls { display: flex; gap: 20px; padding: 20px; }
+        .call-btn { padding: 15px 25px; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; font-size: 16px; }
+        .btn-hangup { background: #dc3545; color: white; }
+        .btn-answer { background: #28a745; color: white; }
+
         .section-header { padding: 15px; background: white; font-size: 18px; font-weight: bold; border-bottom: 1px solid #ddd; }
         .p-15 { padding: 15px; }
     </style>
@@ -55,13 +65,33 @@
         <button onclick="registerUser()">Registrati ed entra</button>
     </div>
 
+    <!-- Schermata Chiamata in Corso -->
+    <div id="call-window">
+        <div style="text-align: center; margin-top: 10px;">
+            <h3 id="call-status-text">Chiamata in corso...</h3>
+            <p id="call-partner-label" style="font-size: 14px; color: #aaa;"></p>
+        </div>
+        <div class="call-videos">
+            <video id="remote-video" autoplay playsinline></video>
+            <video id="local-video" autoplay playsinline muted></video>
+        </div>
+        <div class="call-controls">
+            <button id="answer-call-btn" class="call-btn btn-answer" style="display:none;" onclick="acceptIncomingCall()">Rispondi</button>
+            <button class="call-btn btn-hangup" onclick="endCall()">Riaggancia</button>
+        </div>
+    </div>
+
     <div id="active-chat-window">
         <div class="active-chat-header">
             <div style="display:flex; align-items:center; gap:10px;">
-                <button onclick="closeChat()" style="background:none; border:none; color:white; font-size:16px; cursor:pointer;">⬅ Indietro</button>
+                <button onclick="closeChat()" style="background:none; border:none; color:white; font-size:16px; cursor:pointer;">⬅</button>
                 <span id="chat-partner-name">Nome Amico</span>
             </div>
-            <button onclick="quickSaveContact()" id="quick-save-btn" style="background:#28a745; color:white; border:none; border-radius:4px; padding:5px 10px; font-size:12px; cursor:pointer; display:none;">Salva Contatto</button>
+            <div style="display:flex; gap: 10px; align-items:center;">
+                <button onclick="startCall('audio')" style="background:none; border:none; color:white; font-size:18px; cursor:pointer;" title="Chiamata Audio">📞</button>
+                <button onclick="startCall('video')" style="background:none; border:none; color:white; font-size:18px; cursor:pointer;" title="Videochiamata">📹</button>
+                <button onclick="quickSaveContact()" id="quick-save-btn" style="background:#28a745; color:white; border:none; border-radius:4px; padding:4px 8px; font-size:11px; cursor:pointer; display:none;">Salva</button>
+            </div>
         </div>
         <div class="active-chat-messages" id="messages-box"></div>
         <div class="active-chat-input">
@@ -83,7 +113,7 @@
 
     <div id="section-calls" class="content-section">
         <div class="section-header">Chiamate e Videochiamate</div>
-        <div class="p-15"><button style="padding: 10px 15px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer;">Avvia Nuova Chiamata</button></div>
+        <div class="p-15"><p style="color:#666;">Seleziona un contatto dalla sezione Chat per avviare una chiamata o videochiamata.</p></div>
     </div>
 
     <div id="section-add" class="content-section">
@@ -123,6 +153,12 @@
         let currentChatContact = null;
         let isAlphabetical = false;
 
+        // Variabili WebRTC
+        let peerConnection;
+        let localStream;
+        let incomingCallData = null;
+        const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
         window.onload = () => {
             const savedUser = localStorage.getItem('sanka_user');
             if(savedUser) {
@@ -158,6 +194,37 @@
             if(currentChatContact && (msg.senderPhone === currentChatContact.phone || msg.receiverPhone === currentChatContact.phone)) {
                 renderMessages();
             }
+        });
+
+        // --- Logica WebRTC inRicezione ---
+        socket.on('incoming_call', async (data) => {
+            if(data.toPhone !== currentUser.phone) return;
+            incomingCallData = data;
+            
+            document.getElementById('call-partner-label').innerText = `Da: ${data.fromName} (${data.fromPhone})`;
+            document.getElementById('call-status-text').innerText = data.callType === 'video' ? "Videochiamata in arrivo..." : "Chiamata audio in arrivo...";
+            document.getElementById('answer-call-btn').style.display = 'block';
+            document.getElementById('call-window').style.display = 'flex';
+        });
+
+        socket.on('call_accepted', async (data) => {
+            if(peerConnection) {
+                const remoteDesc = new RTCSessionDescription(data.signal);
+                await peerConnection.setRemoteDescription(remoteDesc);
+                document.getElementById('call-status-text').innerText = "Chiamata in corso";
+            }
+        });
+
+        socket.on('ice_candidate', async (data) => {
+            if(peerConnection && data.signal) {
+                try {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(data.signal));
+                } catch(e) { console.error(e); }
+            }
+        });
+
+        socket.on('call_ended', (data) => {
+            closeCallWindow();
         });
 
         function registerUser() {
@@ -196,7 +263,6 @@
             const container = document.getElementById('chat-list-container');
             if(!currentUser) return;
 
-            // Trova tutti i numeri con cui hai scambiato messaggi o che hai in rubrica
             let activeChatPhones = new Set();
             contacts.forEach(c => activeChatPhones.add(c.phone));
             messages.forEach(m => {
@@ -207,7 +273,7 @@
             let displayList = [];
             activeChatPhones.forEach(phone => {
                 let foundContact = contacts.find(c => c.phone === phone);
-                let name = foundContact ? foundContact.name : phone; // Se non è in rubrica, mostra il numero!
+                let name = foundContact ? foundContact.name : phone;
                 let isSaved = !!foundContact;
                 displayList.push({ name, phone, isSaved });
             });
@@ -215,7 +281,7 @@
             document.getElementById('contacts-count').innerText = `Chat attive: ${displayList.length}`;
 
             if(displayList.length === 0) {
-                container.innerHTML = '<div class="chat-item">Nessuna chat attiva. Aggiungi un amico dal tasto [+] o attendi un messaggio.</div>';
+                container.innerHTML = '<div class="chat-item">Nessuna chat attiva. Aggiungi un amico dal [+] o attendi un messaggio.</div>';
                 return;
             }
 
@@ -244,7 +310,6 @@
             currentChatContact = contact;
             document.getElementById('chat-partner-name').innerText = contact.name;
             
-            // Se il contatto non è salvato, mostra il tasto rapido per salvarlo direttamente dalla chat
             const saveBtn = document.getElementById('quick-save-btn');
             if(!contact.isSaved) {
                 saveBtn.style.display = 'block';
@@ -307,6 +372,112 @@
                 box.appendChild(bubble);
             });
             box.scrollTop = box.scrollHeight;
+        }
+
+        // --- Funzioni per Avviare e Gestire le Chiamate ---
+        async function startCall(callType) {
+            if(!currentChatContact) return;
+            document.getElementById('call-partner-label').innerText = `A: ${currentChatContact.name} (${currentChatContact.phone})`;
+            document.getElementById('call-status-text').innerText = "Chiamata in corso...";
+            document.getElementById('answer-call-btn').style.display = 'none';
+            document.getElementById('call-window').style.display = 'flex';
+
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: true, 
+                    video: callType === 'video' 
+                });
+                document.getElementById('local-video').srcObject = localStream;
+
+                createPeerConnection();
+
+                localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+
+                socket.emit('call_user', {
+                    fromPhone: currentUser.phone,
+                    fromName: currentUser.name,
+                    toPhone: currentChatContact.phone,
+                    signal: offer,
+                    callType: callType
+                });
+            } catch (err) {
+                alert("Impossibile accedere a microfono/fotocamera.");
+                closeCallWindow();
+            }
+        }
+
+        async function acceptIncomingCall() {
+            document.getElementById('answer-call-btn').style.display = 'none';
+            document.getElementById('call-status-text').innerText = "Connessione in corso...";
+
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: true, 
+                    video: incomingCallData.callType === 'video' 
+                });
+                document.getElementById('local-video').srcObject = localStream;
+
+                createPeerConnection();
+
+                localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingCallData.signal));
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+
+                socket.emit('answer_call', {
+                    toPhone: incomingCallData.fromPhone,
+                    signal: answer
+                });
+            } catch (err) {
+                alert("Errore nell'accettare la chiamata.");
+                closeCallWindow();
+            }
+        }
+
+        function createPeerConnection() {
+            peerConnection = new RTCPeerConnection(rtcConfig);
+
+            peerConnection.onicecandidate = (event) => {
+                if(event.candidate) {
+                    let targetPhone = currentChatContact ? currentChatContact.phone : (incomingCallData ? incomingCallData.fromPhone : null);
+                    if(targetPhone) {
+                        socket.emit('ice_candidate', {
+                            toPhone: targetPhone,
+                            signal: event.candidate
+                        });
+                    }
+                }
+            };
+
+            peerConnection.ontrack = (event) => {
+                document.getElementById('remote-video').srcObject = event.streams[0];
+            };
+        }
+
+        function endCall() {
+            let targetPhone = currentChatContact ? currentChatContact.phone : (incomingCallData ? incomingCallData.fromPhone : null);
+            if(targetPhone) {
+                socket.emit('hang_up', { toPhone: targetPhone });
+            }
+            closeCallWindow();
+        }
+
+        function closeCallWindow() {
+            if(localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+            }
+            if(peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+            document.getElementById('call-window').style.display = 'none';
+            document.getElementById('local-video').srcObject = null;
+            document.getElementById('remote-video').srcObject = null;
+            incomingCallData = null;
         }
     </script>
 </body>
