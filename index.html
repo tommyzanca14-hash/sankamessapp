@@ -29,7 +29,6 @@
         .chat-item { padding: 12px 15px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
         .chat-item:hover { background: #f9f9f9; }
 
-        /* Finestra chat mobile-friendly sicura */
         #active-chat-window { display: none; flex-direction: column; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #e5ddd5; z-index: 1500; }
         .active-chat-header { background: #007bff; color: white; display: flex; align-items: center; padding: 12px 15px; gap: 15px; font-weight: bold; font-size: 16px; flex-shrink: 0; }
         .active-chat-messages { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
@@ -127,7 +126,7 @@
                 currentUser = JSON.parse(savedUser);
                 document.getElementById('profile-info').innerText = `Nome: ${currentUser.name} | Tel: ${currentUser.phone} | Email: ${currentUser.email}`;
                 document.getElementById('register-screen').style.display = 'none';
-                socket.emit('get_initial_data');
+                socket.emit('get_initial_data', currentUser.phone);
             }
         };
 
@@ -165,7 +164,7 @@
             
             document.getElementById('profile-info').innerText = `Nome: ${name} | Tel: ${phone} | Email: ${email}`;
             document.getElementById('register-screen').style.display = 'none';
-            socket.emit('get_initial_data');
+            socket.emit('get_initial_data', currentUser.phone);
         }
 
         function switchTab(tabName, element) {
@@ -177,7 +176,7 @@
 
         function addContact() {
             const name = document.getElementById('new-contact-name').value;
-            const phone = document.getElementById('new-contact-phone').value;
+            const phone = document.getElementById('new-contact-phone'].value; // Corretto
             if(!name || !phone) return;
 
             const contactData = { ownerPhone: currentUser.phone, name, phone };
