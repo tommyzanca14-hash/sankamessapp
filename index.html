@@ -153,7 +153,6 @@
         let currentChatContact = null;
         let isAlphabetical = false;
 
-        // Variabili WebRTC
         let peerConnection;
         let localStream;
         let incomingCallData = null;
@@ -196,11 +195,9 @@
             }
         });
 
-        // --- Logica WebRTC inRicezione ---
-        socket.on('incoming_call', async (data) => {
-            if(data.toPhone !== currentUser.phone) return;
+        // --- Gestione WebRTC mirata ---
+        socket.on('incoming_call', (data) => {
             incomingCallData = data;
-            
             document.getElementById('call-partner-label').innerText = `Da: ${data.fromName} (${data.fromPhone})`;
             document.getElementById('call-status-text').innerText = data.callType === 'video' ? "Videochiamata in arrivo..." : "Chiamata audio in arrivo...";
             document.getElementById('answer-call-btn').style.display = 'block';
@@ -223,7 +220,7 @@
             }
         });
 
-        socket.on('call_ended', (data) => {
+        socket.on('call_ended', () => {
             closeCallWindow();
         });
 
@@ -374,7 +371,6 @@
             box.scrollTop = box.scrollHeight;
         }
 
-        // --- Funzioni per Avviare e Gestire le Chiamate ---
         async function startCall(callType) {
             if(!currentChatContact) return;
             document.getElementById('call-partner-label').innerText = `A: ${currentChatContact.name} (${currentChatContact.phone})`;
@@ -390,7 +386,6 @@
                 document.getElementById('local-video').srcObject = localStream;
 
                 createPeerConnection();
-
                 localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
                 const offer = await peerConnection.createOffer();
@@ -421,7 +416,6 @@
                 document.getElementById('local-video').srcObject = localStream;
 
                 createPeerConnection();
-
                 localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingCallData.signal));
@@ -458,6 +452,8 @@
             };
         }
 
+        function endCard() { endCall(); }
+
         function endCall() {
             let targetPhone = currentChatContact ? currentChatContact.phone : (incomingCallData ? incomingCallData.fromPhone : null);
             if(targetPhone) {
@@ -468,6 +464,7 @@
 
         function closeCallWindow() {
             if(localStream) {
+                localStream.getTracks().format = null; // pulizia tracce
                 localStream.getTracks().forEach(track => track.stop());
             }
             if(peerConnection) {
