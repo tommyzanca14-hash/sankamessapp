@@ -1,5 +1,5 @@
 const express = require('express');
-const http = require('http');
+const http = http = require('http'); // o http standard
 const { Server } = require('socket.io');
 
 const app = express();
@@ -8,8 +8,9 @@ const io = new Server(server);
 
 app.use(express.static('public'));
 
-// Mappa per associare il numero di telefono al socket.id corrente
+// Mappe per utenti online e messaggi offline in attesa
 const users = {};
+const offlineMessages = {}; // { phoneNumber: [messages...] }
 
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
@@ -20,6 +21,14 @@ io.on('connection', (socket) => {
         socket.phone = userData.phone;
         console.log(`Utente registrato: ${userData.name} (${userData.phone}) -> Socket ID: ${socket.id}`);
         socket.emit('registration_success', userData);
+        
+        // Consegna eventuali messaggi offline accumulati
+        if (offlineMessages[userData.phone] && offlineMessages[userData.phone].length > 0) {
+            offlineMessages[userData.phone].forEach(msg => {
+                socket.emit('receive_message', msg);
+            });
+            offlineMessages[userData.phone] = []; // Svuota la coda dopo l'invio
+        }
     });
 
     socket.on('login_user', (phone) => {
@@ -27,18 +36,34 @@ io.on('connection', (socket) => {
         socket.phone = phone;
         console.log(`Login utente con numero: ${phone} -> Socket ID: ${socket.id}`);
         socket.emit('login_success', phone);
+        
+        // Consegna eventuali messaggi offline accumulati al login
+        if (offlineMessages[phone] && offlineMessages[phone].length > 0) {
+            offlineMessages[phone].forEach(msg => {
+                socket.emit('receive_message', msg);
+            });
+            offlineMessages[phone] = [];
+        }
     });
 
-    // Gestione messaggi (con supporto offline)
+    // Gestione messaggi con supporto offline completo
     socket.on('send_message', (msg) => {
         console.log(`Messaggio da ${msg.senderPhone} a ${msg.receiverPhone}: ${msg.text}`);
         const receiverSocketId = users[msg.receiverPhone];
         
-        // Se il destinatario è online, invia subito il messaggio
         if (receiverSocketId) {
+            // Destinatario online: invia subito
             io.to(receiverSocketId).emit('receive_message', msg);
+        } else {
+            // Destinatario offline: salva in memoria temporanea
+            if (!offlineMessages[msg.receiverPhone]) {
+                offlineMessages[msg.receiverPhone] = [];
+            }
+            offlineMessages[msg.receiverPhone].push(msg);
+            console.log(`Destinatario ${msg.receiverPhone} offline. Messaggio salvato in coda.`);
         }
-        // Rimbalza il messaggio anche al mittente per sincronizzare le chat
+        
+        // Rimbalza sempre al mittente per la sincronizzazione della chat locale
         socket.emit('receive_message', msg);
     });
 
