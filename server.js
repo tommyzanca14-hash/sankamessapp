@@ -1,5 +1,5 @@
 const express = require('express');
-const http = require('http');
+const http = http = require('http');
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -41,6 +41,7 @@ const messageSchema = new mongoose.Schema({
 });
 const Message = mongoose.model('Message', messageSchema);
 
+// Mappa per tracciare chi è online in tempo reale (Telefono -> SocketID)
 const activeUsers = new Map();
 
 io.on('connection', (socket) => {
@@ -67,7 +68,7 @@ io.on('connection', (socket) => {
             socket.userPhone = data.phone;
             socket.emit('registration_success', user);
 
-            // Invia messaggi pendenti offline
+            // Consegna messaggi offline pendenti
             const pending = await Message.find({ recipient: data.phone, status: 'sent' });
             for (let msg of pending) {
                 socket.emit('receive_message', msg);
@@ -102,7 +103,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Invio messaggi robusto: garantisce che il messaggio venga mostrato e non sparisca
+    // Invio messaggi robusto (impedisce la scomparsa)
     socket.on('send_message', async (msgData) => {
         try {
             const recipientSocketId = activeUsers.get(msgData.recipient);
@@ -117,7 +118,7 @@ io.on('connection', (socket) => {
 
             await newMessage.save();
 
-            const responsePayload = {
+            const messagePayload = {
                 id: newMessage._id,
                 sender: newMessage.sender,
                 recipient: newMessage.recipient,
@@ -126,17 +127,16 @@ io.on('connection', (socket) => {
                 timestamp: newMessage.timestamp
             };
 
-            // Spedisci al destinatario se è online
+            // Invia al destinatario se online
             if (isOnline) {
-                io.to(recipientSocketId).emit('receive_message', responsePayload);
+                io.to(recipientSocketId).emit('receive_message', messagePayload);
             }
 
-            // Spedisci anche al mittente per confermare e mostrare il messaggio in chat senza attese
-            socket.emit('receive_message', responsePayload);
+            // Invia sempre anche al mittente per mostrarlo subito in chat
+            socket.emit('receive_message', messagePayload);
 
         } catch (err) {
             console.error("Errore invio messaggio:", err);
-            socket.emit('message_error', 'Impossibile inviare il messaggio.');
         }
     });
 
@@ -154,6 +154,41 @@ io.on('connection', (socket) => {
         } catch (err) {
             console.error("Errore cronologia:", err);
             socket.emit('chat_history', []);
+        }
+    });
+
+    // Gestione Chiamate con controllo utente ONLINE / OFFLINE
+    socket.on('call_user', (data) => {
+        const { to, from, signal } = data; // 'to' è il numero del destinatario
+        const recipientSocketId = activeUsers.get(to);
+
+        if (recipientSocketId && io.sockets.sockets.has(recipientSocketId)) {
+            // L'utente è online, inoltra la chiamata
+            io.to(recipientSocketId).emit('incoming_call', { from, signal });
+        } else {
+            // L'utente è offline o non raggiungibile: avvisa subito chi chiama
+            socket.emit('user_offline', { message: 'L\'utente non è raggiungibile o è offline.' });
+        }
+    });
+
+    socket.on('answer_call', (data) => {
+        const recipientSocketId = activeUsers.get(data.to);
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('call_accepted', data.signal);
+        }
+    });
+
+    socket.on('ice_candidate', (data) => {
+        const recipientSocketId = activeUsers.get(data.to);
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('ice_candidate', data.candidate);
+        }
+    });
+
+    socket.on('hang_up', (data) => {
+        const recipientSocketId = activeUsers.get(data.to);
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('call_ended', data);
         }
     });
 
