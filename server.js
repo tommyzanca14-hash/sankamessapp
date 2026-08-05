@@ -1,5 +1,5 @@
 const express = require('express');
-const http = require('http');
+const http = http = require('http');
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -26,9 +26,9 @@ mongoose.connect(MONGO_URI)
     .catch(err => console.error("Errore di connessione a MongoDB:", err));
 
 const userSchema = new mongoose.Schema({
-    name: { type: String, required: true },
-    phone: { type: String, required: true, unique: true },
-    email: { type: String, required: true }
+    name: { type: String, required: true, trim: true },
+    phone: { type: String, required: true, unique: true, trim: true },
+    email: { type: String, required: true, trim: true }
 });
 const User = mongoose.model('User', userSchema);
 
@@ -41,7 +41,7 @@ const messageSchema = new mongoose.Schema({
 });
 const Message = mongoose.model('Message', messageSchema);
 
-const activeUsers = new Map();
+const activeUsers = new Map(); // Mappa Telefono/Username -> SocketID
 
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
@@ -53,7 +53,7 @@ io.on('connection', (socket) => {
                 return;
             }
 
-            let user = await User.findOne({ phone: data.phone });
+            let user = await User.findOne({ phone: data.phone.trim() });
             if (!user) {
                 user = new User({
                     name: data.name.trim(),
@@ -63,11 +63,12 @@ io.on('connection', (socket) => {
                 await user.save();
             }
 
-            activeUsers.set(data.phone, socket.id);
-            socket.userPhone = data.phone;
+            activeUsers.set(user.phone, socket.id);
+            activeUsers.set(user.name, socket.id); // Registriamo anche l'username
+            socket.userPhone = user.phone;
             socket.emit('registration_success', user);
 
-            const pending = await Message.find({ recipient: data.phone, status: 'sent' });
+            const pending = await Message.find({ recipient: { $in: [user.phone, user.name] }, status: 'sent' });
             for (let msg of pending) {
                 socket.emit('receive_message', msg);
                 msg.status = 'delivered';
@@ -81,13 +82,14 @@ io.on('connection', (socket) => {
 
     socket.on('login_user', async (data) => {
         try {
-            let user = await User.findOne({ phone: data.phone });
+            let user = await User.findOne({ phone: data.phone.trim() });
             if (user) {
-                activeUsers.set(data.phone, socket.id);
-                socket.userPhone = data.phone;
+                activeUsers.set(user.phone, socket.id);
+                activeUsers.set(user.name, socket.id);
+                socket.userPhone = user.phone;
                 socket.emit('login_success', user);
 
-                const pending = await Message.find({ recipient: data.phone, status: 'sent' });
+                const pending = await Message.find({ recipient: { $in: [user.phone, user.name] }, status: 'sent' });
                 for (let msg of pending) {
                     socket.emit('receive_message', msg);
                     msg.status = 'delivered';
@@ -101,9 +103,44 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Endpoint per risolvere un contatto (cerca se esiste per telefono, nome o email e restituisce il profilo unificato)
+    socket.on('lookup_contact', async (query, callback) => {
+        try {
+            const cleanQuery = query.trim();
+            const foundUser = await User.findOne({
+                $or: [
+                    { phone: cleanQuery },
+                    { name: { $regex: new RegExp(`^${cleanQuery}$`, 'i') } },
+                    { email: { $regex: new RegExp(`^${cleanQuery}$`, 'i') } }
+                ]
+            });
+
+            if (foundUser) {
+                callback({ success: true, user: foundUser });
+            } else {
+                callback({ success: false, message: "Utente non registrato nel sistema." });
+            }
+        } catch (err) {
+            console.error("Errore lookup:", err);
+            callback({ success: false, message: "Errore del server." });
+        }
+    });
+
+    // Invio messaggi ultra-robusto
     socket.on('send_message', async (msgData) => {
         try {
-            const recipientSocketId = activeUsers.get(msgData.recipient);
+            // Troviamo il socket ID del destinatario controllando sia se è registrato col telefono che col nome
+            let recipientSocketId = activeUsers.get(msgData.recipient);
+            if (!recipientSocketId) {
+                // Cerchiamo nel DB se l'identificativo corrisponde a qualcos'altro per trovare il telefono associato
+                const dbUser = await User.findOne({
+                    $or: [{ phone: msgData.recipient }, { name: msgData.recipient }, { email: msgData.recipient }]
+                });
+                if (dbUser) {
+                    recipientSocketId = activeUsers.get(dbUser.phone) || activeUsers.get(dbUser.name);
+                }
+            }
+
             const isOnline = recipientSocketId && io.sockets.sockets.has(recipientSocketId);
 
             const newMessage = new Message({
@@ -127,6 +164,7 @@ io.on('connection', (socket) => {
             if (isOnline) {
                 io.to(recipientSocketId).emit('receive_message', messagePayload);
             }
+            // Rimandiamo istantaneamente al mittente così non sparisce MAI dalla chat
             socket.emit('receive_message', messagePayload);
 
         } catch (err) {
@@ -140,7 +178,9 @@ io.on('connection', (socket) => {
             const history = await Message.find({
                 $or: [
                     { sender: user1, recipient: user2 },
-                    { sender: user2, recipient: user1 }
+                    { sender: user2, recipient: user1 },
+                    { sender: user1, recipient: { $regex: new RegExp(user2, 'i') } },
+                    { sender: { $regex: new RegExp(user2, 'i') }, recipient: user1 }
                 ]
             }).sort({ timestamp: 1 });
 
@@ -160,6 +200,7 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Gestione Chiamate WebRTC
     socket.on('call_user', (data) => {
         const recipientSocketId = activeUsers.get(data.toIdentifier);
         if (recipientSocketId && io.sockets.sockets.has(recipientSocketId)) {
