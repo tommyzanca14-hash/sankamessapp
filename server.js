@@ -27,7 +27,7 @@ mongoose.connect(MONGO_URI)
 
 const userSchema = new mongoose.Schema({
     name: { type: String, required: true },
-    phone: { type: String, required: true },
+    phone: { type: String, required: true, unique: true },
     email: { type: String, required: true }
 });
 const User = mongoose.model('User', userSchema);
@@ -36,18 +36,20 @@ const messageSchema = new mongoose.Schema({
     sender: String,
     recipient: String,
     text: String,
-    status: { type: String, default: 'sent' },
+    status: { type: String, default: 'sent' }, // 'sent' = inviato ma non consegnato, 'delivered' = consegnato
     timestamp: { type: Date, default: Date.now }
 });
 const Message = mongoose.model('Message', messageSchema);
 
+// Mappa per tracciare quali socket ID appartengono a quale numero di telefono/utente
+const activeUsers = new Map();
+
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
 
-    // Registrazione blindata: se c'è un errore di duplicazione, fa comunque accedere l'utente
+    // Registrazione utente online
     socket.on('register_user', async (data) => {
         try {
-            console.log("Tentativo registrazione:", data);
             if (!data || !data.name || !data.phone) {
                 socket.emit('registration_error', 'Inserisci nome e telefono.');
                 return;
@@ -63,16 +65,24 @@ io.on('connection', (socket) => {
                 await user.save();
             }
 
+            // Associa il socket al numero di telefono dell'utente
+            activeUsers.set(data.phone, socket.id);
+            socket.userPhone = data.phone;
+
             socket.emit('registration_success', user);
+            
+            // CONSEGNA MESSAGGI PENDENTI: Appena entra online, invia i messaggi non consegnati
+            const pendingMessages = await Message.find({ recipient: data.phone, status: 'sent' });
+            if (pendingMessages.length > 0) {
+                for (let msg of pendingMessages) {
+                    socket.emit('receive_message', msg);
+                    msg.status = 'delivered';
+                    await msg.save();
+                }
+            }
         } catch (err) {
-            console.error("Errore saltato:", err);
-            // Anche in caso di errore critico del DB, mandiamo un utente fittizio per non bloccare l'app
-            socket.emit('registration_success', {
-                _id: "local_fallback_id",
-                name: data.name || "Utente",
-                phone: data.phone || "000000",
-                email: data.email || "test@test.com"
-            });
+            console.error("Errore registrazione:", err);
+            socket.emit('registration_error', 'Errore del server.');
         }
     });
 
@@ -80,56 +90,87 @@ io.on('connection', (socket) => {
         try {
             let user = await User.findOne({ phone: data.phone });
             if (user) {
+                activeUsers.set(data.phone, socket.id);
+                socket.userPhone = data.phone;
                 socket.emit('login_success', user);
+
+                // Consegna messaggi pendenti anche al login
+                const pendingMessages = await Message.find({ recipient: data.phone, status: 'sent' });
+                for (let msg of pendingMessages) {
+                    socket.emit('receive_message', msg);
+                    msg.status = 'delivered';
+                    await msg.save();
+                }
             } else {
-                socket.emit('registration_success', {
-                    _id: "local_fallback_id",
-                    name: "Utente",
-                    phone: data.phone,
-                    email: "test@test.com"
-                });
+                socket.emit('registration_error', 'Utente non trovato.');
             }
         } catch (err) {
-            socket.emit('login_success', {
-                _id: "local_fallback_id",
-                name: "Utente",
-                phone: data.phone || "000000",
-                email: "test@test.com"
-            });
+            console.error("Errore login:", err);
         }
     });
 
+    // Gestione invio messaggi con coda offline
     socket.on('send_message', async (msgData) => {
         try {
+            // Controlla se il destinatario è attualmente online
+            const recipientSocketId = activeUsers.get(msgData.recipient);
+            const isOnline = recipientSocketId && io.sockets.sockets.has(recipientSocketId);
+
             const newMessage = new Message({
                 sender: msgData.sender,
                 recipient: msgData.recipient,
                 text: msgData.text,
-                status: 'delivered'
+                status: isOnline ? 'delivered' : 'sent'
             });
+
             await newMessage.save();
-            io.emit('receive_message', newMessage);
+
+            // Se il destinatario è online, mandaglielo subito in tempo reale
+            if (isOnline) {
+                io.to(recipientSocketId).emit('receive_message', {
+                    id: newMessage._id,
+                    sender: newMessage.sender,
+                    recipient: newMessage.recipient,
+                    text: newMessage.text,
+                    status: newMessage.status,
+                    timestamp: newMessage.timestamp
+                });
+            }
+
+            // Conferma al mittente che il messaggio è partito/registrato
+            socket.emit('message_sent_ack', {
+                id: newMessage._id,
+                status: newMessage.status
+            });
+
         } catch (err) {
-            io.emit('receive_message', msgData);
+            console.error("Errore invio messaggio:", err);
         }
     });
 
+    // Recupero cronologia chat
     socket.on('get_chat_history', async (data) => {
         try {
+            const { user1, user2 } = data;
             const history = await Message.find({
                 $or: [
-                    { sender: data.user1, recipient: data.user2 },
-                    { sender: data.user2, recipient: data.user1 }
+                    { sender: user1, recipient: user2 },
+                    { sender: user2, recipient: user1 }
                 ]
             }).sort({ timestamp: 1 });
+
             socket.emit('chat_history', history);
         } catch (err) {
+            console.error("Errore cronologia:", err);
             socket.emit('chat_history', []);
         }
     });
 
     socket.on('disconnect', () => {
-        console.log('Utente disconnesso');
+        if (socket.userPhone) {
+            activeUsers.delete(socket.userPhone);
+        }
+        console.log('Utente disconnesso:', socket.id);
     });
 });
 
