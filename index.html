@@ -221,15 +221,20 @@
         socket.on('receive_message', (msg) => {
             if(!currentUser) return;
             
-            let exists = messages.some(m => (m.id && m.id === msg.id) || (m._id && m._id === msg.id));
+            let exists = messages.some(m => (m.id && m.id === (msg.id || msg._id)) || (m._id && m._id === (msg.id || msg._id)));
             if(!exists) {
+                msg.id = msg.id || msg._id;
                 messages.push(msg);
                 updateContactsDisplay();
                 
-                if(currentChatContact && (msg.sender === currentChatContact.identifier || msg.recipient === currentChatContact.identifier)) {
-                    renderMessages();
-                    if(msg.recipient === currentUser.phone || msg.recipient === currentUser.name) {
-                        socket.emit('update_status', { messageId: msg.id || msg._id, status: 'read' });
+                if(currentChatContact) {
+                    const pId = currentChatContact.phone;
+                    const pName = currentChatContact.realName;
+                    if(msg.sender === pId || msg.sender === pName || msg.recipient === pId || msg.recipient === pName) {
+                        renderMessages();
+                        if(msg.recipient === currentUser.phone || msg.recipient === currentUser.name) {
+                            socket.emit('update_status', { messageId: msg.id, status: 'read' });
+                        }
                     }
                 }
             }
@@ -238,8 +243,8 @@
         socket.on('chat_history', (history) => {
             if(!currentUser) return;
             history.forEach(dbMsg => {
-                dbMsg.id = dbMsg._id;
-                let exists = messages.some(m => (m.id && m.id === dbMsg.id) || (m._id && m._id === dbMsg._id));
+                dbMsg.id = dbMsg._id || dbMsg.id;
+                let exists = messages.some(m => m.id === dbMsg.id);
                 if(!exists) {
                     messages.push(dbMsg);
                 }
@@ -251,7 +256,7 @@
         });
 
         socket.on('message_status_updated', (data) => {
-            let msg = messages.find(m => (m.id && m.id === data.messageId) || (m._id && m._id === data.messageId));
+            let msg = messages.find(m => m.id === data.messageId);
             if(msg) {
                 msg.status = data.status;
                 if(currentChatContact) renderMessages();
@@ -325,20 +330,17 @@
             socket.emit('lookup_contact', identifier, (response) => {
                 if(response.success) {
                     const realUser = response.user;
-                    const uniqueKey = realUser.phone;
+                    const phoneKey = realUser.phone;
 
-                    let existing = contacts.find(c => c.identifier === uniqueKey || c.phone === realUser.phone);
+                    let existing = contacts.find(c => c.phone === phoneKey);
                     
                     if(existing) {
                         existing.name = nickname;
-                        existing.identifier = uniqueKey;
-                        existing.phone = realUser.phone;
                         existing.realName = realUser.name;
                         existing.isSaved = true;
                     } else {
                         contacts.push({ 
                             name: nickname, 
-                            identifier: uniqueKey, 
                             phone: realUser.phone, 
                             realName: realUser.name,
                             isSaved: true 
@@ -364,9 +366,8 @@
             let activeMap = new Map();
 
             contacts.forEach(c => {
-                activeMap.set(c.identifier, { 
+                activeMap.set(c.phone, { 
                     name: c.name, 
-                    identifier: c.identifier, 
                     phone: c.phone, 
                     realName: c.realName, 
                     isSaved: true 
@@ -379,8 +380,8 @@
                 
                 if(other && other !== currentUser.phone && other !== currentUser.name) {
                     let alreadyExists = false;
-                    for(let [key, val] of activeMap.entries()) {
-                        if(key === other || val.phone === other || val.realName === other) {
+                    for(let [phoneKey, val] of activeMap.entries()) {
+                        if(phoneKey === other || val.realName === other) {
                             alreadyExists = true;
                             break;
                         }
@@ -389,8 +390,8 @@
                     if(!alreadyExists) {
                         activeMap.set(other, { 
                             name: other, 
-                            identifier: other, 
                             phone: other, 
+                            realName: other, 
                             isSaved: false 
                         });
                     }
@@ -402,7 +403,7 @@
             if(filterText) {
                 displayList = displayList.filter(item => 
                     item.name.toLowerCase().includes(filterText.toLowerCase()) || 
-                    item.identifier.toLowerCase().includes(filterText.toLowerCase()) ||
+                    item.phone.toLowerCase().includes(filterText.toLowerCase()) ||
                     (item.realName && item.realName.toLowerCase().includes(filterText.toLowerCase()))
                 );
             }
@@ -422,7 +423,7 @@
             displayList.forEach(chatObj => {
                 const div = document.createElement('div');
                 div.className = 'chat-item';
-                let label = chatObj.isSaved ? `<b style="color: #000; font-weight: bold;">${chatObj.name}</b>` : `<span style="color:#d9534f; font-weight: bold;">Sconosciuto: ${chatObj.identifier}</span>`;
+                let label = chatObj.isSaved ? `<b style="color: #000; font-weight: bold;">${chatObj.name}</b>` : `<span style="color:#d9534f; font-weight: bold;">Sconosciuto: ${chatObj.phone}</span>`;
                 div.innerHTML = `<span>${label}</span> <span style="color:#6c757d; font-size:12px; font-weight:bold;">Apri ➡</span>`;
                 div.onclick = () => openChat(chatObj);
                 container.appendChild(div);
@@ -450,25 +451,25 @@
                 saveBtn.style.display = 'none';
             }
 
-            socket.emit('get_chat_history', { user1: currentUser.phone, user2: contact.identifier });
+            socket.emit('get_chat_history', { user1: currentUser.phone, user2: contact.phone });
 
             renderMessages();
             document.getElementById('active-chat-window').style.display = 'flex';
         }
 
         function quickSaveContact() {
-            let customName = prompt("Inserisci il nome in rubrica per:", currentChatContact.identifier);
+            let customName = prompt("Inserisci il nome in rubrica per:", currentChatContact.phone);
             if(!customName) return;
 
-            let existing = contacts.find(c => c.identifier === currentChatContact.identifier || c.phone === currentChatContact.phone);
+            let existing = contacts.find(c => c.phone === currentChatContact.phone);
             if(existing) {
                 existing.name = customName;
                 existing.isSaved = true;
             } else {
                 contacts.push({ 
                     name: customName, 
-                    identifier: currentChatContact.identifier, 
-                    phone: currentChatContact.phone || currentChatContact.identifier, 
+                    phone: currentChatContact.phone, 
+                    realName: currentChatContact.realName,
                     isSaved: true 
                 });
             }
@@ -494,7 +495,7 @@
 
             const msgData = {
                 sender: currentUser.phone,
-                recipient: currentChatContact.identifier,
+                recipient: currentChatContact.phone,
                 text: text
             };
 
@@ -507,15 +508,15 @@
             box.innerHTML = '';
             if(!currentChatContact || !currentUser) return;
 
-            const partnerId = currentChatContact.identifier;
-            const partnerPhone = currentChatContact.phone;
+            const pPhone = currentChatContact.phone;
+            const pRealName = currentChatContact.realName;
 
             const chatMessages = messages.filter(m => {
                 const isFromMe = (m.sender === currentUser.phone || m.sender === currentUser.name);
                 const isToMe = (m.recipient === currentUser.phone || m.recipient === currentUser.name);
                 
-                const isToPartner = (m.recipient === partnerId || (partnerPhone && m.recipient === partnerPhone));
-                const isFromPartner = (m.sender === partnerId || (partnerPhone && m.sender === partnerPhone));
+                const isToPartner = (m.recipient === pPhone || m.recipient === pRealName);
+                const isFromPartner = (m.sender === pPhone || m.sender === pRealName);
 
                 return (isFromMe && isToPartner) || (isFromPartner && isToMe);
             });
@@ -585,7 +586,7 @@
                 socket.emit('call_user', {
                     fromPhone: currentUser.phone,
                     fromName: currentUser.name,
-                    toIdentifier: currentChatContact.identifier,
+                    toIdentifier: currentChatContact.phone,
                     signal: offer,
                     callType: callType
                 });
@@ -635,7 +636,7 @@
 
             peerConnection.onicecandidate = (event) => {
                 if(event.candidate) {
-                    let targetIdentifier = currentChatContact ? currentChatContact.identifier : (incomingCallData ? incomingCallData.fromPhone : null);
+                    let targetIdentifier = currentChatContact ? currentChatContact.phone : (incomingCallData ? incomingCallData.fromPhone : null);
                     if(targetIdentifier) {
                         socket.emit('ice_candidate', {
                             toIdentifier: targetIdentifier,
@@ -656,7 +657,7 @@
         }
 
         function endCall() {
-            let targetIdentifier = currentChatContact ? currentChatContact.identifier : (incomingCallData ? incomingCallData.fromPhone : null);
+            let targetIdentifier = currentChatContact ? currentChatContact.phone : (incomingCallData ? incomingCallData.fromPhone : null);
             if(targetIdentifier) {
                 socket.emit('hang_up', { toIdentifier: targetIdentifier });
             }
