@@ -32,7 +32,7 @@ if (mongoUri) {
 }
 
 const userSchema = new mongoose.Schema({
-    name: { type: String, unique: true, required: true }, // Username unico
+    name: { type: String, unique: true, required: true },
     phone: { type: String, unique: true, required: true },
     email: { type: String, unique: true, required: true }
 });
@@ -48,13 +48,22 @@ const messageSchema = new mongoose.Schema({
 const Message = mongoose.model('Message', messageSchema);
 // ---------------------------------------------
 
-// Mappa in memoria per associare identificativi (telefono, username, email) al socket ID attivo
+// Mappa in memoria estesa per associare qualsiasi identificativo al socket ID
 const activeUsers = {}; // identifier -> socket.id
+
+function registerActiveUser(identifier, socketId) {
+    if (!identifier) return;
+    const cleanId = String(identifier).trim();
+    activeUsers[cleanId] = socketId;
+    // Registra anche versioni pulite da spazi o prefissi comuni se necessario
+    const numericOnly = cleanId.replace(/\D/g, '');
+    if (numericOnly) activeUsers[numericOnly] = socketId;
+}
 
 io.on('connection', (socket) => {
     console.log(`[CONNESSIONE] Nuovo client connesso: ${socket.id}`);
 
-    // Registrazione utente con controllo unicità username
+    // Registrazione utente
     socket.on('register_user', async (userData) => {
         if (!userData || !userData.phone || !userData.name || !userData.email) return;
         try {
@@ -66,9 +75,9 @@ io.on('connection', (socket) => {
             const newUser = new User(userData);
             await newUser.save();
 
-            activeUsers[userData.phone] = socket.id;
-            activeUsers[userData.name] = socket.id;
-            activeUsers[userData.email] = socket.id;
+            registerActiveUser(userData.phone, socket.id);
+            registerActiveUser(userData.name, socket.id);
+            registerActiveUser(userData.email, socket.id);
             socket.identifier = userData.phone;
 
             socket.emit('registration_success', userData);
@@ -86,9 +95,10 @@ io.on('connection', (socket) => {
         let email = typeof userData === 'object' ? userData.email : null;
 
         if (!phone) return;
-        activeUsers[phone] = socket.id;
-        if(name) activeUsers[name] = socket.id;
-        if(email) activeUsers[email] = socket.id;
+        
+        registerActiveUser(phone, socket.id);
+        if(name) registerActiveUser(name, socket.id);
+        if(email) registerActiveUser(email, socket.id);
         socket.identifier = phone;
 
         console.log(`[UTENTE LOGIN] Identificativo: ${phone} -> Socket: ${socket.id}`);
@@ -97,13 +107,35 @@ io.on('connection', (socket) => {
         deliverPendingMessages({ phone, name, email }, socket);
     });
 
+    // Richiesta della cronologia messaggi tra due utenti (per garantire che siano eterni e visibili)
+    socket.on('get_chat_history', async ({ user1, user2 }) => {
+        try {
+            const history = await Message.find({
+                $or: [
+                    { sender: user1, recipient: user2 },
+                    { sender: user2, recipient: user1 }
+                ]
+            }).sort({ timestamp: 1 });
+
+            socket.emit('chat_history', history);
+        } catch (err) {
+            console.error('[ERRORE HISTORY]', err);
+        }
+    });
+
     // Gestione Invio Messaggi e Spunte
     socket.on('send_message', async (msg) => {
         if (!msg || !msg.sender || !msg.recipient || !msg.text) return;
 
         console.log(`[MESSAGGIO] Da ${msg.sender} a ${msg.recipient}: ${msg.text}`);
 
-        let recipientSocketId = activeUsers[msg.recipient];
+        // Cerca il destinatario usando varie chiavi possibili (numero esatto, pulito, nome)
+        let recipientSocketId = activeUsers[msg.recipient] || activeUsers[String(msg.recipient).trim()];
+        if (!recipientSocketId) {
+            const numeric = String(msg.recipient).replace(/\D/g, '');
+            recipientSocketId = activeUsers[numeric];
+        }
+
         let initialStatus = recipientSocketId ? 'delivered' : 'sent';
 
         try {
@@ -117,15 +149,15 @@ io.on('connection', (socket) => {
             
             msg.id = newMsg._id.toString();
             msg.status = initialStatus;
+            msg.timestamp = newMsg.timestamp;
 
             if (recipientSocketId) {
                 io.to(recipientSocketId).emit('receive_message', msg);
-                console.log(`[REALTIME] Consegnato in tempo reale al socket ${recipientSocketId} con stato: ${initialStatus}`);
+                console.log(`[REALTIME] Consegnato in tempo reale al socket ${recipientSocketId}`);
             } else {
-                console.log(`[OFFLINE] Destinatario ${msg.recipient} offline. Messaggio salvato con spunta singola.`);
+                console.log(`[OFFLINE] Destinatario ${msg.recipient} non trovato online. Salvato su DB.`);
             }
 
-            // Aggiorna subito il mittente con lo stato corretto (1 o 2 spunte bianche)
             socket.emit('message_status_updated', { messageId: msg.id, status: initialStatus });
 
         } catch (err) {
@@ -133,13 +165,13 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Aggiornamento stato messaggio (es. 'read' con spunte blu)
+    // Aggiornamento stato messaggio (es. 'read')
     socket.on('update_status', async (data) => {
         if (!data || !data.messageId || !data.status) return;
         try {
             let updated = await Message.findByIdAndUpdate(data.messageId, { status: data.status }, { new: true });
             if (updated) {
-                let senderSocketId = activeUsers[updated.sender];
+                let senderSocketId = activeUsers[updated.sender] || activeUsers[String(updated.sender).trim()];
                 if (senderSocketId) {
                     io.to(senderSocketId).emit('message_status_updated', { messageId: data.messageId, status: data.status });
                 }
@@ -149,9 +181,9 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- Segnalazione WebRTC (Chiamate e Videochiamate) ---
+    // WebRTC Chiamate
     socket.on('call_user', (data) => {
-        const targetSocket = activeUsers[data.toIdentifier];
+        const targetSocket = activeUsers[data.toIdentifier] || activeUsers[String(data.toIdentifier).trim()];
         if (targetSocket) {
             io.to(targetSocket).emit('incoming_call', data);
         } else {
@@ -161,23 +193,17 @@ io.on('connection', (socket) => {
 
     socket.on('answer_call', (data) => {
         const targetSocket = activeUsers[data.toIdentifier];
-        if (targetSocket) {
-            io.to(targetSocket).emit('call_accepted', data);
-        }
+        if (targetSocket) io.to(targetSocket).emit('call_accepted', data);
     });
 
     socket.on('ice_candidate', (data) => {
         const targetSocket = activeUsers[data.toIdentifier];
-        if (targetSocket) {
-            io.to(targetSocket).emit('ice_candidate', data);
-        }
+        if (targetSocket) io.to(targetSocket).emit('ice_candidate', data);
     });
 
     socket.on('hang_up', (data) => {
         const targetSocket = activeUsers[data.toIdentifier];
-        if (targetSocket) {
-            io.to(targetSocket).emit('call_ended', data);
-        }
+        if (targetSocket) io.to(targetSocket).emit('call_ended', data);
     });
 
     // Disconnessione
@@ -189,7 +215,6 @@ io.on('connection', (socket) => {
     });
 });
 
-// Funzione per consegnare i messaggi pendenti offline e aggiornare a 'delivered' (2 spunte bianche)
 async function deliverPendingMessages(userData, socket) {
     try {
         let queryCriteria = [ { recipient: userData.phone } ];
@@ -198,14 +223,11 @@ async function deliverPendingMessages(userData, socket) {
 
         const pending = await Message.find({ $or: queryCriteria, status: { $ne: 'read' } }).sort({ timestamp: 1 });
         if (pending && pending.length > 0) {
-            console.log(`[SYNC OFFLINE] Trovati ${pending.length} messaggi pendenti per ${userData.phone}`);
             for (const m of pending) {
-                // Se erano in stato 'sent', ora che è online diventano 'delivered'
                 if(m.status === 'sent') {
                     m.status = 'delivered';
                     await m.save();
                     
-                    // Notifica il mittente che il messaggio è ora consegnato (2 spunte bianche)
                     let senderSocket = activeUsers[m.sender];
                     if(senderSocket) {
                         io.to(senderSocket).emit('message_status_updated', { messageId: m._id.toString(), status: 'delivered' });
