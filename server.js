@@ -36,18 +36,16 @@ const messageSchema = new mongoose.Schema({
     sender: String,
     recipient: String,
     text: String,
-    status: { type: String, default: 'sent' }, // 'sent' = inviato ma non consegnato, 'delivered' = consegnato
+    status: { type: String, default: 'sent' },
     timestamp: { type: Date, default: Date.now }
 });
 const Message = mongoose.model('Message', messageSchema);
 
-// Mappa per tracciare quali socket ID appartengono a quale numero di telefono/utente
 const activeUsers = new Map();
 
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
 
-    // Registrazione utente online
     socket.on('register_user', async (data) => {
         try {
             if (!data || !data.name || !data.phone) {
@@ -65,20 +63,16 @@ io.on('connection', (socket) => {
                 await user.save();
             }
 
-            // Associa il socket al numero di telefono dell'utente
             activeUsers.set(data.phone, socket.id);
             socket.userPhone = data.phone;
-
             socket.emit('registration_success', user);
-            
-            // CONSEGNA MESSAGGI PENDENTI: Appena entra online, invia i messaggi non consegnati
-            const pendingMessages = await Message.find({ recipient: data.phone, status: 'sent' });
-            if (pendingMessages.length > 0) {
-                for (let msg of pendingMessages) {
-                    socket.emit('receive_message', msg);
-                    msg.status = 'delivered';
-                    await msg.save();
-                }
+
+            // Invia messaggi pendenti offline
+            const pending = await Message.find({ recipient: data.phone, status: 'sent' });
+            for (let msg of pending) {
+                socket.emit('receive_message', msg);
+                msg.status = 'delivered';
+                await msg.save();
             }
         } catch (err) {
             console.error("Errore registrazione:", err);
@@ -94,9 +88,8 @@ io.on('connection', (socket) => {
                 socket.userPhone = data.phone;
                 socket.emit('login_success', user);
 
-                // Consegna messaggi pendenti anche al login
-                const pendingMessages = await Message.find({ recipient: data.phone, status: 'sent' });
-                for (let msg of pendingMessages) {
+                const pending = await Message.find({ recipient: data.phone, status: 'sent' });
+                for (let msg of pending) {
                     socket.emit('receive_message', msg);
                     msg.status = 'delivered';
                     await msg.save();
@@ -109,10 +102,9 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Gestione invio messaggi con coda offline
+    // Invio messaggi robusto: garantisce che il messaggio venga mostrato e non sparisca
     socket.on('send_message', async (msgData) => {
         try {
-            // Controlla se il destinatario è attualmente online
             const recipientSocketId = activeUsers.get(msgData.recipient);
             const isOnline = recipientSocketId && io.sockets.sockets.has(recipientSocketId);
 
@@ -125,30 +117,29 @@ io.on('connection', (socket) => {
 
             await newMessage.save();
 
-            // Se il destinatario è online, mandaglielo subito in tempo reale
+            const responsePayload = {
+                id: newMessage._id,
+                sender: newMessage.sender,
+                recipient: newMessage.recipient,
+                text: newMessage.text,
+                status: newMessage.status,
+                timestamp: newMessage.timestamp
+            };
+
+            // Spedisci al destinatario se è online
             if (isOnline) {
-                io.to(recipientSocketId).emit('receive_message', {
-                    id: newMessage._id,
-                    sender: newMessage.sender,
-                    recipient: newMessage.recipient,
-                    text: newMessage.text,
-                    status: newMessage.status,
-                    timestamp: newMessage.timestamp
-                });
+                io.to(recipientSocketId).emit('receive_message', responsePayload);
             }
 
-            // Conferma al mittente che il messaggio è partito/registrato
-            socket.emit('message_sent_ack', {
-                id: newMessage._id,
-                status: newMessage.status
-            });
+            // Spedisci anche al mittente per confermare e mostrare il messaggio in chat senza attese
+            socket.emit('receive_message', responsePayload);
 
         } catch (err) {
             console.error("Errore invio messaggio:", err);
+            socket.emit('message_error', 'Impossibile inviare il messaggio.');
         }
     });
 
-    // Recupero cronologia chat
     socket.on('get_chat_history', async (data) => {
         try {
             const { user1, user2 } = data;
