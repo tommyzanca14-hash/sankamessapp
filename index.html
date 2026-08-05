@@ -476,7 +476,13 @@
         socket.on('receive_message', (msg) => {
             if(!currentUser) return;
             if(msg.senderPhone === currentUser.phone || msg.receiverPhone === currentUser.phone) {
-                let exists = messages.some(m => m.senderPhone === msg.senderPhone && m.receiverPhone === msg.receiverPhone && m.text === msg.text && Math.abs((m.time || 0) - (msg.time || 0)) < 2000);
+                let exists = messages.some(m => 
+                    m.senderPhone === msg.senderPhone && 
+                    m.receiverPhone === msg.receiverPhone && 
+                    m.text === msg.text && 
+                    Math.abs((m.time || 0) - (msg.time || Date.now())) < 5000
+                );
+                
                 if(!exists) {
                     msg.time = msg.time || Date.now();
                     messages.push(msg);
@@ -664,6 +670,13 @@
                 time: Date.now()
             };
 
+            // Aggiunta immediata al client per renderizzare la bolla
+            messages.push(msgData);
+            saveMessagesToLocalStorage();
+            updateContactsDisplay();
+            renderMessages();
+
+            // Invio al server via socket
             socket.emit('send_message', msgData);
             input.value = '';
         }
