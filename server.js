@@ -1,8 +1,6 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const fs = require('fs');
-const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
@@ -10,52 +8,22 @@ const io = new Server(server);
 
 app.use(express.static(__dirname));
 
-const USERS_FILE = path.join(__dirname, 'users.json');
-const MESSAGES_FILE = path.join(__dirname, 'offline_messages.json');
-
-// Funzioni di utilità per leggere e scrivere su file JSON
-function loadData(filePath) {
-    try {
-        if (fs.existsSync(filePath)) {
-            const data = fs.readFileSync(filePath, 'utf8');
-            return JSON.parse(data);
-        }
-    } catch (e) {
-        console.error("Errore lettura file:", e);
-    }
-    return {};
-}
-
-function saveData(filePath, data) {
-    try {
-        fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
-    } catch (e) {
-        console.error("Errore scrittura file:", e);
-    }
-}
-
-// Mappe in memoria per gli utenti connessi
-const users = {}; 
-// Struttura offlineMessages salvata su file: { phoneNumber: [messages...] }
-let offlineMessages = loadData(MESSAGES_FILE);
+// Mappe in memoria
+const users = {};          // Mappa phone -> socket.id
+const offlineMessages = {}; // Mappa phone -> array di messaggi
 
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
 
+    // Registrazione o Login unificato
     socket.on('register_user', (userData) => {
         users[userData.phone] = socket.id;
         socket.phone = userData.phone;
-        console.log(`Utente registrato: ${userData.name} (${userData.phone})`);
+        console.log(`Utente registrato/connesso: ${userData.name} (${userData.phone})`);
         socket.emit('registration_success', userData);
         
-        // Consegna messaggi offline salvati permanentemente
-        if (offlineMessages[userData.phone] && offlineMessages[userData.phone].length > 0) {
-            offlineMessages[userData.phone].forEach(msg => {
-                socket.emit('receive_message', msg);
-            });
-            offlineMessages[userData.phone] = [];
-            saveData(MESSAGES_FILE, offlineMessages);
-        }
+        // Invia eventuali messaggi accumulati mentre era offline
+        deliverOfflineMessages(userData.phone, socket);
     });
 
     socket.on('login_user', (phone) => {
@@ -64,14 +32,8 @@ io.on('connection', (socket) => {
         console.log(`Login utente con numero: ${phone}`);
         socket.emit('login_success', phone);
         
-        // Consegna messaggi offline al login
-        if (offlineMessages[phone] && offlineMessages[phone].length > 0) {
-            offlineMessages[phone].forEach(msg => {
-                socket.emit('receive_message', msg);
-            });
-            offlineMessages[phone] = [];
-            saveData(MESSAGES_FILE, offlineMessages);
-        }
+        // Invia eventuali messaggi accumulati mentre era offline
+        deliverOfflineMessages(phone, socket);
     });
 
     socket.on('send_message', (msg) => {
@@ -79,19 +41,19 @@ io.on('connection', (socket) => {
         const receiverSocketId = users[msg.receiverPhone];
         
         if (receiverSocketId) {
-            // Destinatario online
+            // Destinatario online: invia subito
             io.to(receiverSocketId).emit('receive_message', msg);
+            console.log(`Messaggio consegnato in tempo reale a ${msg.receiverPhone}`);
         } else {
-            // Destinatario offline: salvataggio su file permanente
+            // Destinatario offline: salva in memoria
             if (!offlineMessages[msg.receiverPhone]) {
                 offlineMessages[msg.receiverPhone] = [];
             }
             offlineMessages[msg.receiverPhone].push(msg);
-            saveData(MESSAGES_FILE, offlineMessages);
-            console.log(`Destinatario ${msg.receiverPhone} offline. Salvato su file.`);
+            console.log(`Destinatario ${msg.receiverPhone} offline. Messaggio messo in coda.`);
         }
         
-        // Rimbalza al mittente
+        // Rimbalza sempre il messaggio al mittente per confermare l'invio
         socket.emit('receive_message', msg);
     });
 
@@ -101,7 +63,7 @@ io.on('connection', (socket) => {
         if (calleeSocketId) {
             io.to(calleeSocketId).emit('incoming_call', data);
         } else {
-            socket.emit('call_failed', { reason: "L'utente chiamato non è online o irraggiungibile." });
+            socket.emit('call_failed', { reason: "L'utente chiamato non è online." });
         }
     });
 
@@ -133,6 +95,17 @@ io.on('connection', (socket) => {
         }
     });
 });
+
+function deliverOfflineMessages(phone, socket) {
+    if (offlineMessages[phone] && offlineMessages[phone].length > 0) {
+        console.log(`Invio di ${offlineMessages[phone].length} messaggi offline a ${phone}`);
+        offlineMessages[phone].forEach(msg => {
+            socket.emit('receive_message', msg);
+        });
+        // Pulisce la coda una volta inviati
+        offlineMessages[phone] = [];
+    }
+}
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
