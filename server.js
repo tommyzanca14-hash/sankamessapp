@@ -32,9 +32,9 @@ if (mongoUri) {
 }
 
 const userSchema = new mongoose.Schema({
-    name: { type: String, unique: true, required: true },
+    name: { type: String, required: true },
     phone: { type: String, unique: true, required: true },
-    email: { type: String, unique: true, required: true }
+    email: { type: String, required: true }
 });
 const User = mongoose.model('User', userSchema);
 
@@ -42,20 +42,18 @@ const messageSchema = new mongoose.Schema({
     sender: String,
     recipient: String,
     text: String,
-    status: { type: String, default: 'sent' }, // 'sent', 'delivered', 'read'
+    status: { type: String, default: 'sent' },
     timestamp: { type: Date, default: Date.now }
 });
 const Message = mongoose.model('Message', messageSchema);
 // ---------------------------------------------
 
-// Mappa in memoria estesa per associare qualsiasi identificativo al socket ID
 const activeUsers = {}; // identifier -> socket.id
 
 function registerActiveUser(identifier, socketId) {
     if (!identifier) return;
     const cleanId = String(identifier).trim();
     activeUsers[cleanId] = socketId;
-    // Registra anche versioni pulite da spazi o prefissi comuni se necessario
     const numericOnly = cleanId.replace(/\D/g, '');
     if (numericOnly) activeUsers[numericOnly] = socketId;
 }
@@ -63,17 +61,23 @@ function registerActiveUser(identifier, socketId) {
 io.on('connection', (socket) => {
     console.log(`[CONNESSIONE] Nuovo client connesso: ${socket.id}`);
 
-    // Registrazione utente
+    // Registrazione o Login automatico se già esistente
     socket.on('register_user', async (userData) => {
-        if (!userData || !userData.phone || !userData.name || !userData.email) return;
+        if (!userData || !userData.phone || !userData.name || !userData.email) {
+            socket.emit('registration_error', 'Compila tutti i campi obbligatori.');
+            return;
+        }
         try {
-            let existing = await User.findOne({ $or: [{ name: userData.name }, { phone: userData.phone }, { email: userData.email }] });
+            let existing = await User.findOne({ phone: userData.phone });
             if (existing) {
-                socket.emit('registration_error', 'Username, telefono o email già registrati nel sistema.');
-                return;
+                // Se il numero esiste già, aggiorniamo i dati e lo facciamo entrare (evita il blocco)
+                existing.name = userData.name;
+                existing.email = userData.email;
+                await existing.save();
+            } else {
+                const newUser = new User(userData);
+                await newUser.save();
             }
-            const newUser = new User(userData);
-            await newUser.save();
 
             registerActiveUser(userData.phone, socket.id);
             registerActiveUser(userData.name, socket.id);
@@ -84,7 +88,7 @@ io.on('connection', (socket) => {
             deliverPendingMessages(userData, socket);
         } catch(err) {
             console.error('[ERRORE REGISTRAZIONE]', err);
-            socket.emit('registration_error', 'Errore durante la registrazione.');
+            socket.emit('registration_error', 'Errore del server durante la registrazione.');
         }
     });
 
@@ -107,7 +111,7 @@ io.on('connection', (socket) => {
         deliverPendingMessages({ phone, name, email }, socket);
     });
 
-    // Richiesta della cronologia messaggi tra due utenti (per garantire che siano eterni e visibili)
+    // Richiesta della cronologia messaggi tra due utenti
     socket.on('get_chat_history', async ({ user1, user2 }) => {
         try {
             const history = await Message.find({
@@ -129,7 +133,6 @@ io.on('connection', (socket) => {
 
         console.log(`[MESSAGGIO] Da ${msg.sender} a ${msg.recipient}: ${msg.text}`);
 
-        // Cerca il destinatario usando varie chiavi possibili (numero esatto, pulito, nome)
         let recipientSocketId = activeUsers[msg.recipient] || activeUsers[String(msg.recipient).trim()];
         if (!recipientSocketId) {
             const numeric = String(msg.recipient).replace(/\D/g, '');
@@ -153,9 +156,6 @@ io.on('connection', (socket) => {
 
             if (recipientSocketId) {
                 io.to(recipientSocketId).emit('receive_message', msg);
-                console.log(`[REALTIME] Consegnato in tempo reale al socket ${recipientSocketId}`);
-            } else {
-                console.log(`[OFFLINE] Destinatario ${msg.recipient} non trovato online. Salvato su DB.`);
             }
 
             socket.emit('message_status_updated', { messageId: msg.id, status: initialStatus });
@@ -165,7 +165,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Aggiornamento stato messaggio (es. 'read')
+    // Aggiornamento stato messaggio
     socket.on('update_status', async (data) => {
         if (!data || !data.messageId || !data.status) return;
         try {
@@ -249,7 +249,7 @@ async function deliverPendingMessages(userData, socket) {
     }
 }
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
     console.log(`Server avviato e in ascolto sulla porta ${PORT}`);
 });
