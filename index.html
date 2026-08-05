@@ -410,7 +410,7 @@
     </nav>
 
     <script>
-        const socket = io();
+        const socket = io('https://omega7.onrender.com');
         let currentUser = null;
         let contacts = [];
         let messages = [];
@@ -670,13 +670,11 @@
                 time: Date.now()
             };
 
-            // Aggiunta immediata al client per renderizzare la bolla
             messages.push(msgData);
             saveMessagesToLocalStorage();
             updateContactsDisplay();
             renderMessages();
 
-            // Invio al server via socket
             socket.emit('send_message', msgData);
             input.value = '';
         }
