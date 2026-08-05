@@ -3,10 +3,14 @@ const http = require('http');
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const path = require('path');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Serve i file statici (come index.html) dalla cartella principale
+app.use(express.static(path.join(__dirname)));
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -16,14 +20,12 @@ const io = new Server(server, {
     }
 });
 
-// Connessione a MongoDB (assicurati di impostare MONGO_URI nelle variabili d'ambiente di Render)
 const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/omega7";
 
 mongoose.connect(MONGO_URI)
     .then(() => console.log("Connesso a MongoDB con successo"))
     .catch(err => console.error("Errore di connessione a MongoDB:", err));
 
-// Schema Utente
 const userSchema = new mongoose.Schema({
     name: { type: String, unique: true, required: true },
     phone: { type: String, unique: true, required: true },
@@ -31,7 +33,6 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', userSchema);
 
-// Schema Messaggio (con persistenza eterna su MongoDB)
 const messageSchema = new mongoose.Schema({
     sender: String,
     recipient: String,
@@ -44,7 +45,6 @@ const Message = mongoose.model('Message', messageSchema);
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
 
-    // Registrazione utente
     socket.on('register_user', async (data) => {
         try {
             if (!data.name || !data.phone || !emailValid(data.email)) {
@@ -57,7 +57,6 @@ io.on('connection', (socket) => {
             });
 
             if (existingUser) {
-                // Se esiste già, lo consideriamo un login/ritorno valido per evitare blocchi
                 socket.emit('registration_success', existingUser);
                 return;
             }
@@ -76,7 +75,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Login utente già registrato
     socket.on('login_user', async (data) => {
         try {
             if (!data.phone) return;
@@ -91,7 +89,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Gestione invio messaggi
     socket.on('send_message', async (msgData) => {
         try {
             const newMessage = new Message({
@@ -103,7 +100,6 @@ io.on('connection', (socket) => {
 
             await newMessage.save();
 
-            // Invia il messaggio a tutti i client connessi (il client filtra per destinatario)
             io.emit('receive_message', {
                 id: newMessage._id,
                 sender: newMessage.sender,
@@ -117,7 +113,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Recupero cronologia chat da MongoDB
     socket.on('get_chat_history', async (data) => {
         try {
             const { user1, user2 } = data;
@@ -134,7 +129,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Aggiornamento stato messaggio (es. letto)
     socket.on('update_status', async (data) => {
         try {
             await Message.findByIdAndUpdate(data.messageId, { status: data.status });
@@ -144,7 +138,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Segnalazione chiamate WebRTC
     socket.on('call_user', (data) => {
         socket.broadcast.emit('incoming_call', data);
     });
