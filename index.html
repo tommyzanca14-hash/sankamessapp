@@ -133,8 +133,8 @@
         <div class="section-header">Aggiungi Contatto</div>
         <div class="p-15">
             <div style="display: flex; flex-direction: column; gap: 12px; background:white; padding:20px; border-radius:10px; border:1px solid #dee2e6;">
-                <p style="font-size: 13px; color: #495057; font-weight: normal;">Inserisci **uno solo** dei tre identificativi (Username esatto, Numero di telefono o Email):</p>
-                <input type="text" id="new-contact-identifier" placeholder="Username, Telefono o Email" style="padding: 10px; border: 1px solid #ced4da; border-radius: 6px; font-weight: normal;">
+                <p style="font-size: 13px; color: #495057; font-weight: normal;">Inserisci l'identificativo esatto (Numero di telefono o Username):</p>
+                <input type="text" id="new-contact-identifier" placeholder="Numero o Username" style="padding: 10px; border: 1px solid #ced4da; border-radius: 6px; font-weight: normal;">
                 <input type="text" id="new-contact-nickname" placeholder="Nome da visualizzare in rubrica" style="padding: 10px; border: 1px solid #ced4da; border-radius: 6px; font-weight: normal;">
                 <button onclick="addContact()" style="padding: 12px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight:bold;">Salva in Rubrica</button>
             </div>
@@ -212,9 +212,7 @@
         function loadLocalStorageData() {
             if(!currentUser) return;
             let savedContacts = localStorage.getItem('sanka_contacts_' + currentUser.phone);
-            let savedMessages = localStorage.getItem('sanka_messages_' + currentUser.phone);
             contacts = savedContacts ? JSON.parse(savedContacts) : [];
-            messages = savedMessages ? JSON.parse(savedMessages) : [];
         }
 
         function saveContactsToLocalStorage() {
@@ -222,29 +220,39 @@
             localStorage.setItem('sanka_contacts_' + currentUser.phone, JSON.stringify(contacts));
         }
 
-        function saveMessagesToLocalStorage() {
-            if(!currentUser) return;
-            localStorage.setItem('sanka_messages_' + currentUser.phone, JSON.stringify(messages));
-        }
-
+        // Ricezione messaggi in tempo reale dal server
         socket.on('receive_message', (msg) => {
             if(!currentUser) return;
-            if(msg.sender === currentUser.phone || msg.recipient === currentUser.phone || msg.sender === currentUser.name || msg.recipient === currentUser.name) {
-                let exists = messages.some(m => m.id === msg.id || (m.sender === msg.sender && m.recipient === msg.recipient && m.text === msg.text && Math.abs((m.time || 0) - (msg.time || Date.now())) < 5000));
+            
+            // Verifica che il messaggio appartenga alla nostra conversazione
+            let exists = messages.some(m => m.id === msg.id || m._id === msg.id);
+            if(!exists) {
+                messages.push(msg);
+                updateContactsDisplay();
                 
-                if(!exists) {
-                    msg.time = msg.time || Date.now();
-                    messages.push(msg);
-                    saveMessagesToLocalStorage();
-                    updateContactsDisplay();
-                    
-                    if(currentChatContact && (msg.sender === currentChatContact.identifier || msg.recipient === currentChatContact.identifier)) {
-                        renderMessages();
-                        if(msg.recipient === currentUser.phone || msg.recipient === currentUser.name) {
-                            socket.emit('update_status', { messageId: msg.id || msg._id, status: 'read' });
-                        }
+                if(currentChatContact && (msg.sender === currentChatContact.identifier || msg.recipient === currentChatContact.identifier)) {
+                    renderMessages();
+                    if(msg.recipient === currentUser.phone || msg.recipient === currentUser.name) {
+                        socket.emit('update_status', { messageId: msg.id || msg._id, status: 'read' });
                     }
                 }
+            }
+        });
+
+        // Ricezione della cronologia completa da MongoDB (messaggi eterni)
+        socket.on('chat_history', (history) => {
+            if(!currentUser) return;
+            // Unisce la cronologia del DB senza duplicati
+            history.forEach(dbMsg => {
+                dbMsg.id = dbMsg._id;
+                let exists = messages.some(m => m.id === dbMsg.id || m._id === dbMsg._id);
+                if(!exists) {
+                    messages.push(dbMsg);
+                }
+            });
+            updateContactsDisplay();
+            if(currentChatContact) {
+                renderMessages();
             }
         });
 
@@ -252,15 +260,14 @@
             let msg = messages.find(m => m.id === data.messageId || m._id === data.messageId);
             if(msg) {
                 msg.status = data.status;
-                saveMessagesToLocalStorage();
                 if(currentChatContact) renderMessages();
             }
         });
 
         socket.on('incoming_call', (data) => {
-            if(!currentUser || data.toIdentifier !== currentUser.phone) return;
+            if(!currentUser) return;
             incomingCallData = data;
-            document.getElementById('call-partner-label').innerText = `Da: ${data.fromName}`;
+            document.getElementById('call-partner-label').innerText = `Da: ${data.fromName || data.fromPhone}`;
             document.getElementById('call-status-text').innerText = data.callType === 'video' ? "Videochiamata in arrivo..." : "Chiamata audio in arrivo...";
             document.getElementById('answer-call-btn').style.display = 'block';
             document.getElementById('call-window').style.display = 'flex';
@@ -313,7 +320,7 @@
         }
 
         function addContact() {
-            const identifier = document.getElementById('new-contact-identifier').value.trim();
+            const identifier = document.getElementById('new-contact-identifier'].value.trim();
             const nickname = document.getElementById('new-contact-nickname').value.trim();
             if(!identifier || !nickname) {
                 alert("Inserisci l'identificativo e un nome per la rubrica.");
@@ -402,16 +409,11 @@
                 saveBtn.style.display = 'none';
             }
 
+            // Richiede la cronologia eterna direttamente da MongoDB
+            socket.emit('get_chat_history', { user1: currentUser.phone, user2: contact.identifier });
+
             renderMessages();
             document.getElementById('active-chat-window').style.display = 'flex';
-
-            messages.forEach(m => {
-                if(m.sender === contact.identifier && m.status !== 'read') {
-                    m.status = 'read';
-                    socket.emit('update_status', { messageId: m.id || m._id, status: 'read' });
-                }
-            });
-            saveMessagesToLocalStorage();
         }
 
         function quickSaveContact() {
@@ -444,20 +446,11 @@
             const text = input.value.trim();
             if(!text || !currentChatContact || !currentUser) return;
 
-            const tempId = 'msg_' + Date.now() + '_' + Math.random();
             const msgData = {
-                id: tempId,
                 sender: currentUser.phone,
                 recipient: currentChatContact.identifier,
-                text: text,
-                time: Date.now(),
-                status: 'sent'
+                text: text
             };
-
-            messages.push(msgData);
-            saveMessagesToLocalStorage();
-            updateContactsDisplay();
-            renderMessages();
 
             socket.emit('send_message', msgData);
             input.value = '';
@@ -485,7 +478,7 @@
                 let footer = document.createElement('div');
                 footer.className = 'message-footer';
                 
-                let timeStr = new Date(msg.time || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                let timeStr = new Date(msg.timestamp || msg.time || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 let timeSpan = document.createElement('span');
                 timeSpan.innerText = timeStr;
                 footer.appendChild(timeSpan);
@@ -494,10 +487,7 @@
                     let ticksSpan = document.createElement('span');
                     ticksSpan.className = 'status-ticks';
                     let st = msg.status || 'sent';
-                    if(st === 'pending') {
-                        ticksSpan.innerHTML = '○';
-                        ticksSpan.className += ' gray';
-                    } else if(st === 'sent') {
+                    if(st === 'sent') {
                         ticksSpan.innerHTML = '✓';
                         ticksSpan.className += ' gray';
                     } else if(st === 'delivered') {
@@ -547,7 +537,7 @@
                 });
             } catch (err) {
                 console.error("Errore accesso media:", err);
-                alert("Impossibile accedere a microfono o fotocamera. Assicurati di aver concesso i permessi nel browser.");
+                alert("Impossibile accedere a microfono o fotocamera.");
                 closeCallWindow();
             }
         }
@@ -578,7 +568,6 @@
                 });
             } catch (err) {
                 console.error("Errore accettazione chiamata:", err);
-                alert("Errore nell'avviare i flussi multimediali.");
                 closeCallWindow();
             }
         }
