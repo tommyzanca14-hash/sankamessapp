@@ -1,5 +1,5 @@
 const express = require('express');
-const http = http = require('http');
+const http = require('http');
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -41,7 +41,6 @@ const messageSchema = new mongoose.Schema({
 });
 const Message = mongoose.model('Message', messageSchema);
 
-// Mappa per tracciare chi è online in tempo reale (Telefono -> SocketID)
 const activeUsers = new Map();
 
 io.on('connection', (socket) => {
@@ -68,7 +67,6 @@ io.on('connection', (socket) => {
             socket.userPhone = data.phone;
             socket.emit('registration_success', user);
 
-            // Consegna messaggi offline pendenti
             const pending = await Message.find({ recipient: data.phone, status: 'sent' });
             for (let msg of pending) {
                 socket.emit('receive_message', msg);
@@ -103,7 +101,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Invio messaggi robusto (impedisce la scomparsa)
     socket.on('send_message', async (msgData) => {
         try {
             const recipientSocketId = activeUsers.get(msgData.recipient);
@@ -127,12 +124,9 @@ io.on('connection', (socket) => {
                 timestamp: newMessage.timestamp
             };
 
-            // Invia al destinatario se online
             if (isOnline) {
                 io.to(recipientSocketId).emit('receive_message', messagePayload);
             }
-
-            // Invia sempre anche al mittente per mostrarlo subito in chat
             socket.emit('receive_message', messagePayload);
 
         } catch (err) {
@@ -157,38 +151,47 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Gestione Chiamate con controllo utente ONLINE / OFFLINE
-    socket.on('call_user', (data) => {
-        const { to, from, signal } = data; // 'to' è il numero del destinatario
-        const recipientSocketId = activeUsers.get(to);
+    socket.on('update_status', async (data) => {
+        try {
+            await Message.findByIdAndUpdate(data.messageId, { status: data.status });
+            io.emit('message_status_updated', { messageId: data.messageId, status: data.status });
+        } catch (err) {
+            console.error("Errore aggiornamento stato:", err);
+        }
+    });
 
+    socket.on('call_user', (data) => {
+        const recipientSocketId = activeUsers.get(data.toIdentifier);
         if (recipientSocketId && io.sockets.sockets.has(recipientSocketId)) {
-            // L'utente è online, inoltra la chiamata
-            io.to(recipientSocketId).emit('incoming_call', { from, signal });
+            io.to(recipientSocketId).emit('incoming_call', {
+                fromPhone: data.fromPhone,
+                fromName: data.fromName,
+                signal: data.signal,
+                callType: data.callType
+            });
         } else {
-            // L'utente è offline o non raggiungibile: avvisa subito chi chiama
-            socket.emit('user_offline', { message: 'L\'utente non è raggiungibile o è offline.' });
+            socket.emit('call_failed', { reason: "L'utente non è raggiungibile o è offline." });
         }
     });
 
     socket.on('answer_call', (data) => {
-        const recipientSocketId = activeUsers.get(data.to);
+        const recipientSocketId = activeUsers.get(data.toIdentifier);
         if (recipientSocketId) {
-            io.to(recipientSocketId).emit('call_accepted', data.signal);
+            io.to(recipientSocketId).emit('call_accepted', { signal: data.signal });
         }
     });
 
     socket.on('ice_candidate', (data) => {
-        const recipientSocketId = activeUsers.get(data.to);
+        const recipientSocketId = activeUsers.get(data.toIdentifier);
         if (recipientSocketId) {
-            io.to(recipientSocketId).emit('ice_candidate', data.candidate);
+            io.to(recipientSocketId).emit('ice_candidate', { signal: data.signal });
         }
     });
 
     socket.on('hang_up', (data) => {
-        const recipientSocketId = activeUsers.get(data.to);
+        const recipientSocketId = activeUsers.get(data.toIdentifier);
         if (recipientSocketId) {
-            io.to(recipientSocketId).emit('call_ended', data);
+            io.to(recipientSocketId).emit('call_ended');
         }
     });
 
