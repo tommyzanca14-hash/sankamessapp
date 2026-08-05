@@ -40,7 +40,7 @@ io.on('connection', (socket) => {
         console.log(`Utente registrato/connesso: ${userData.name} (${userData.phone})`);
         socket.emit('registration_success', userData);
         
-        // Invia eventuali messaggi accumulati mentre era offline dal DB
+        // Invia eventuali messaggi offline dal DB
         deliverOfflineMessages(userData.phone, socket);
     });
 
@@ -50,33 +50,30 @@ io.on('connection', (socket) => {
         console.log(`Login utente con numero: ${phone}`);
         socket.emit('login_success', phone);
         
-        // Invia eventuali messaggi accumulati mentre era offline dal DB
+        // Invia eventuali messaggi offline dal DB
         deliverOfflineMessages(phone, socket);
     });
 
-    socket.on('send_message', async (msg) => {
+    socket.on('send_message', (msg) => {
         console.log(`Messaggio da ${msg.senderPhone} a ${msg.receiverPhone}: ${msg.text}`);
         const receiverSocketId = users[msg.receiverPhone];
         
-        // Salva sempre il messaggio nel database MongoDB per persistenza
-        try {
-            const newMessage = new Message(msg);
-            await newMessage.save();
-        } catch (err) {
-            console.error('Errore nel salvataggio del messaggio su MongoDB:', err);
-        }
-
+        // 1. INVIAMO SUBITO IN TEMPO REALE (priorità massima alla velocità)
         if (receiverSocketId) {
-            // Destinatario online: invia subito
             io.to(receiverSocketId).emit('receive_message', msg);
             console.log(`Messaggio consegnato in tempo reale a ${msg.receiverPhone}`);
         } else {
-            // Destinatario offline: il messaggio è comunque salvato nel DB e verrà consegnato al login
-            console.log(`Destinatario ${msg.receiverPhone} offline. Messaggio salvato nel database.`);
+            console.log(`Destinatario ${msg.receiverPhone} offline.`);
         }
         
-        // Rimbalza sempre il messaggio al mittente per confermare l'invio
+        // Rimbalza subito al mittente per confermare l'invio grafico
         socket.emit('receive_message', msg);
+
+        // 2. SALVIAMO SU MONGODB IN BACKGROUND (senza bloccare la chat)
+        const newMessage = new Message(msg);
+        newMessage.save().catch(err => {
+            console.error('Errore nel salvataggio asincrono su MongoDB:', err);
+        });
     });
 
     // --- Segnalazione WebRTC per Chiamate ---
@@ -120,7 +117,6 @@ io.on('connection', (socket) => {
 
 async function deliverOfflineMessages(phone, socket) {
     try {
-        // Cerca tutti i messaggi destinati a questo numero salvati nel DB
         const pendingMessages = await Message.find({ receiverPhone: phone }).sort({ timestamp: 1 });
         
         if (pendingMessages && pendingMessages.length > 0) {
@@ -132,7 +128,7 @@ async function deliverOfflineMessages(phone, socket) {
                     text: msg.text
                 });
             });
-            // Una volta consegnati, li rimuoviamo dal database per evitare duplicati
+            // Rimuoviamo i messaggi consegnati dal DB
             await Message.deleteMany({ receiverPhone: phone });
         }
     } catch (err) {
