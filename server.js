@@ -27,42 +27,52 @@ const messageSchema = new mongoose.Schema({
 const Message = mongoose.model('Message', messageSchema);
 // -----------------------------------------------
 
-// Mappe in memoria
-const users = {};          // Mappa phone -> socket.id
+// Mappa globale in memoria per tracciare i numeri di telefono e i loro socket attivi
+const users = {}; // Mappa phone -> socket.id
 
 io.on('connection', (socket) => {
-    console.log('Un utente si è connesso:', socket.id);
+    console.log('Nuova connessione socket stabilita:', socket.id);
 
-    // Registrazione o Login unificato
+    // Registrazione utente
     socket.on('register_user', (userData) => {
         if (!userData || !userData.phone) return;
+        
+        // Associa il numero al socket ID corrente
         users[userData.phone] = socket.id;
         socket.phone = userData.phone;
-        console.log(`Utente registrato/connesso: ${userData.name} (${userData.phone})`);
+        
+        console.log(`[REGISTRAZIONE] Utente associato: ${userData.name} (${userData.phone}) -> Socket ID: ${socket.id}`);
         socket.emit('registration_success', userData);
         
-        // Invia eventuali messaggi offline dal DB
+        // Consegna i messaggi offline accumulati
         deliverOfflineMessages(userData.phone, socket);
     });
 
+    // Login utente
     socket.on('login_user', (phone) => {
         if (!phone) return;
+        
+        // Associa il numero al socket ID corrente (sovrascrive eventuali vecchie sessioni)
         users[phone] = socket.id;
         socket.phone = phone;
-        console.log(`Login utente con numero: ${phone}`);
+        
+        console.log(`[LOGIN] Utente online con numero: ${phone} -> Socket ID: ${socket.id}`);
         socket.emit('login_success', phone);
         
-        // Invia eventuali messaggi offline dal DB
+        // Consegna i messaggi offline accumulati
         deliverOfflineMessages(phone, socket);
     });
 
+    // Invio messaggio
     socket.on('send_message', async (msg) => {
-        if (!msg || !msg.senderPhone || !msg.receiverPhone) return;
+        if (!msg || !msg.senderPhone || !msg.receiverPhone || !msg.text) return;
         
-        console.log(`Messaggio da ${msg.senderPhone} a ${msg.receiverPhone}: ${msg.text}`);
+        console.log(`[MESSAGGIO] Da ${msg.senderPhone} a ${msg.receiverPhone}: ${msg.text}`);
+        
+        // 1. Cerchiamo il socket ID aggiornato del destinatario nella mappa
         const receiverSocketId = users[msg.receiverPhone];
         
-        // 1. SALVIAMO SUBITO SU MONGODB (Garantisce la persistenza certa)
+        // 2. Salviamo SEMPRE il messaggio su MongoDB
         try {
             const newMessage = new Message({
                 senderPhone: msg.senderPhone,
@@ -70,20 +80,18 @@ io.on('connection', (socket) => {
                 text: msg.text
             });
             await newMessage.save();
+            console.log(`[DB] Messaggio salvato correttamente nel database.`);
         } catch (err) {
-            console.error('Errore nel salvataggio del messaggio su MongoDB:', err);
+            console.error('[ERRORE DB] Impossibile salvare il messaggio:', err);
         }
 
-        // 2. SE IL DESTINATARIO È ONLINE, INVIO IMMEDIATO
+        // 3. Se il destinatario è online, inviamoglielo SUBITO in tempo reale
         if (receiverSocketId) {
             io.to(receiverSocketId).emit('receive_message', msg);
-            console.log(`Messaggio consegnato in tempo reale a ${msg.receiverPhone}`);
+            console.log(`[REALTIME] Consegnato in tempo reale al socket ${receiverSocketId} (${msg.receiverPhone})`);
         } else {
-            console.log(`Destinatario ${msg.receiverPhone} offline. Messaggio salvato nel database.`);
+            console.log(`[OFFLINE] Il destinatario ${msg.receiverPhone} non è attualmente nella mappa degli utenti online.`);
         }
-        
-        // 3. Rimbalza sempre al mittente per confermare l'invio grafico
-        socket.emit('receive_message', msg);
     });
 
     // --- Segnalazione WebRTC per Chiamate ---
@@ -118,34 +126,38 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        if (socket.phone && users[socket.phone] === socket.id) {
-            delete users[socket.phone];
-            console.log(`Utente con telefono ${socket.phone} disconnesso.`);
+        if (socket.phone) {
+            console.log(`[DISCONNESSO] Utente ${socket.phone} con socket ${socket.id}`);
+            // Rimuoviamo dalla mappa solo se il socket disconnesso corrisponde all'ultimo attivo
+            if (users[socket.phone] === socket.id) {
+                delete users[socket.phone];
+            }
         }
     });
 });
 
 async function deliverOfflineMessages(phone, socket) {
     try {
-        // Cerca tutti i messaggi destinati a questo numero ordinati dal più vecchio al più recente
         const pendingMessages = await Message.find({ receiverPhone: phone }).sort({ timestamp: 1 });
         
         if (pendingMessages && pendingMessages.length > 0) {
-            console.log(`Invio di ${pendingMessages.length} messaggi offline dal DB a ${phone}`);
+            console.log(`[OFFLINE SYNC] Trovati ${pendingMessages.length} messaggi offline per ${phone}`);
             
             for (const msg of pendingMessages) {
                 socket.emit('receive_message', {
                     senderPhone: msg.senderPhone,
                     receiverPhone: msg.receiverPhone,
-                    text: msg.text
+                    text: msg.text,
+                    timestamp: msg.timestamp
                 });
             }
             
-            // Rimuoviamo i messaggi consegnati dal DB solo dopo averli inviati tutti con successo
+            // Rimuoviamo i messaggi dal DB dopo averli consegnati
             await Message.deleteMany({ receiverPhone: phone });
+            console.log(`[OFFLINE SYNC] Messaggi consegnati e rimossi dal DB per ${phone}`);
         }
     } catch (err) {
-        console.error('Errore nel recupero dei messaggi offline:', err);
+        console.error('[ERRORE OFFLINE SYNC]:', err);
     }
 }
 
