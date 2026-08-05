@@ -173,9 +173,7 @@ io.on('connection', (socket) => {
             const history = await Message.find({
                 $or: [
                     { sender: user1, recipient: user2 },
-                    { sender: user2, recipient: user1 },
-                    { sender: user1, recipient: { $regex: new RegExp(user2, 'i') } },
-                    { sender: { $regex: new RegExp(user2, 'i') }, recipient: user1 }
+                    { sender: user2, recipient: user1 }
                 ]
             }).sort({ timestamp: 1 });
 
