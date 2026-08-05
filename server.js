@@ -20,12 +20,14 @@ const io = new Server(server, {
     }
 });
 
+// Connessione a MongoDB
 const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/omega7";
 
 mongoose.connect(MONGO_URI)
     .then(() => console.log("Connesso a MongoDB con successo"))
     .catch(err => console.error("Errore di connessione a MongoDB:", err));
 
+// Schema Utente
 const userSchema = new mongoose.Schema({
     name: { type: String, unique: true, required: true },
     phone: { type: String, unique: true, required: true },
@@ -33,6 +35,7 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', userSchema);
 
+// Schema Messaggio
 const messageSchema = new mongoose.Schema({
     sender: String,
     recipient: String,
@@ -45,8 +48,11 @@ const Message = mongoose.model('Message', messageSchema);
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
 
+    // Registrazione utente
     socket.on('register_user', async (data) => {
         try {
+            console.log("Dati ricevuti per la registrazione:", data);
+
             if (!data.name || !data.phone || !emailValid(data.email)) {
                 socket.emit('registration_error', 'Dati non validi o incompleti.');
                 return;
@@ -70,11 +76,12 @@ io.on('connection', (socket) => {
             await newUser.save();
             socket.emit('registration_success', newUser);
         } catch (err) {
-            console.error("Errore durante la registrazione:", err);
-            socket.emit('registration_error', 'Errore del server durante la registrazione.');
+            console.error("ERRORE CRITICO DB DURANTE REGISTRAZIONE:", err.message);
+            socket.emit('registration_error', 'Errore del server durante la registrazione: ' + err.message);
         }
     });
 
+    // Login utente già registrato
     socket.on('login_user', async (data) => {
         try {
             if (!data.phone) return;
@@ -89,6 +96,7 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Gestione invio messaggi
     socket.on('send_message', async (msgData) => {
         try {
             const newMessage = new Message({
@@ -113,6 +121,7 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Recupero cronologia chat da MongoDB
     socket.on('get_chat_history', async (data) => {
         try {
             const { user1, user2 } = data;
@@ -129,6 +138,7 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Aggiornamento stato messaggio (es. letto)
     socket.on('update_status', async (data) => {
         try {
             await Message.findByIdAndUpdate(data.messageId, { status: data.status });
@@ -138,6 +148,7 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Segnalazione chiamate WebRTC
     socket.on('call_user', (data) => {
         socket.broadcast.emit('incoming_call', data);
     });
