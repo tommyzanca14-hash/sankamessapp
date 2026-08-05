@@ -131,8 +131,8 @@
         <div class="section-header">Aggiungi Contatto</div>
         <div class="p-15">
             <div style="display: flex; flex-direction: column; gap: 12px; background:white; padding:20px; border-radius:10px; border:1px solid #dee2e6;">
-                <p style="font-size: 13px; color: #495057; font-weight: normal;">Inserisci l'identificativo esatto (Numero di telefono o Username):</p>
-                <input type="text" id="new-contact-identifier" placeholder="Numero o Username" style="padding: 10px; border: 1px solid #ced4da; border-radius: 6px; font-weight: normal;">
+                <p style="font-size: 13px; color: #495057; font-weight: normal;">Inserisci l'identificativo esatto (Numero, Username o Email):</p>
+                <input type="text" id="new-contact-identifier" placeholder="Numero, Username o Email" style="padding: 10px; border: 1px solid #ced4da; border-radius: 6px; font-weight: normal;">
                 <input type="text" id="new-contact-nickname" placeholder="Nome da visualizzare in rubrica" style="padding: 10px; border: 1px solid #ced4da; border-radius: 6px; font-weight: normal;">
                 <button onclick="addContact()" style="padding: 12px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight:bold;">Salva in Rubrica</button>
             </div>
@@ -160,7 +160,7 @@
     <script>
         const socket = io();
         let currentUser = null;
-        let contacts = [];
+        let contacts = []; // Rubrica locale: memorizzerà sempre il numero di telefono come chiave univoca
         let messages = [];
         let currentChatContact = null;
         let isAlphabetical = false;
@@ -226,7 +226,7 @@
                 messages.push(msg);
                 updateContactsDisplay();
                 
-                if(currentChatContact && (msg.sender === currentChatContact.identifier || msg.recipient === currentChatContact.identifier)) {
+                if(currentChatContact && (msg.sender === currentChatContact.identifier || msg.recipient === currentChatContact.identifier || msg.sender === currentChatContact.phone || msg.recipient === currentChatContact.phone)) {
                     renderMessages();
                     if(msg.recipient === currentUser.phone || msg.recipient === currentUser.name) {
                         socket.emit('update_status', { messageId: msg.id || msg._id, status: 'read' });
@@ -313,52 +313,83 @@
             element.classList.add('active');
         }
 
+        // AGGIUNTA CONTATTO INTELLIGENTE: Risolve l'utente tramite server ed evita duplicati chat
         function addContact() {
             const identifier = document.getElementById('new-contact-identifier').value.trim();
             const nickname = document.getElementById('new-contact-nickname').value.trim();
+            
             if(!identifier || !nickname) {
                 alert("Inserisci l'identificativo e un nome per la rubrica.");
                 return;
             }
 
-            let existing = contacts.find(c => c.identifier === identifier);
-            if(existing) {
-                existing.name = nickname;
-            } else {
-                contacts.push({ name: nickname, identifier: identifier });
-            }
+            // Chiediamo al server di verificare a quale utente reale corrisponde l'identificativo (telefono, username o email)
+            socket.emit('lookup_contact', identifier, (response) => {
+                if(response.success) {
+                    const realUser = response.user;
+                    // Usiamo SEMPRE il numero di telefono univoco del DB come identificatore principale della chat
+                    const uniqueKey = realUser.phone; 
 
-            saveContactsToLocalStorage();
-            updateContactsDisplay();
+                    let existing = contacts.find(c => c.identifier === uniqueKey || c.phone === realUser.phone || c.name === realUser.name);
+                    if(existing) {
+                        existing.name = nickname;
+                        existing.identifier = uniqueKey;
+                        existing.phone = realUser.phone;
+                        existing.realName = realUser.name;
+                    } else {
+                        contacts.push({ 
+                            name: nickname, 
+                            identifier: uniqueKey, 
+                            phone: realUser.phone, 
+                            realName: realUser.name,
+                            isSaved: true 
+                        });
+                    }
 
-            document.getElementById('new-contact-identifier').value = '';
-            document.getElementById('new-contact-nickname').value = '';
-            switchTab('chats', document.querySelectorAll('.nav-item')[0]);
+                    saveContactsToLocalStorage();
+                    updateContactsDisplay();
+
+                    document.getElementById('new-contact-identifier').value = '';
+                    document.getElementById('new-contact-nickname').value = '';
+                    switchTab('chats', document.querySelectorAll('.nav-item')[0]);
+                } else {
+                    alert(response.message || "Impossibile trovare questo utente nel sistema.");
+                }
+            });
         }
 
         function updateContactsDisplay(filterText = '') {
             const container = document.getElementById('chat-list-container');
             if(!currentUser) return;
 
-            let activeIdentifiers = new Set();
-            contacts.forEach(c => activeIdentifiers.add(c.identifier));
+            let activeIdentifiers = new Map(); // Mappa identifier -> info contatto per evitare duplicati
+
+            // Prima carichiamo i contatti salvati
+            contacts.forEach(c => {
+                activeIdentifiers.set(c.identifier, { name: c.name, identifier: c.identifier, isSaved: true });
+            });
+
+            // Poi aggiungiamo eventuali chat arrivate da messaggi esterni
             messages.forEach(m => {
                 let isMe = (m.sender === currentUser.phone || m.sender === currentUser.name);
                 let other = isMe ? m.recipient : m.sender;
-                if(other) activeIdentifiers.add(other);
+                if(other && other !== currentUser.phone && other !== currentUser.name) {
+                    // Controlliamo se esiste già in rubrica
+                    let found = contacts.find(c => c.identifier === other || c.phone === other || c.realName === other);
+                    if(!found && !activeIdentifiers.has(other)) {
+                        activeIdentifiers.set(other, { name: other, identifier: other, isSaved: false });
+                    }
+                }
             });
 
-            let displayList = [];
-            activeIdentifiers.forEach(ident => {
-                let foundContact = contacts.find(c => c.identifier === ident);
-                let name = foundContact ? foundContact.name : ident;
-                let isSaved = !!foundContact;
-                
-                if(filterText && !name.toLowerCase().includes(filterText.toLowerCase()) && !ident.toLowerCase().includes(filterText.toLowerCase())) {
-                    return;
-                }
-                displayList.push({ name, identifier: ident, isSaved });
-            });
+            let displayList = Array.from(activeIdentifiers.values());
+
+            if(filterText) {
+                displayList = displayList.filter(item => 
+                    item.name.toLowerCase().includes(filterText.toLowerCase()) || 
+                    item.identifier.toLowerCase().includes(filterText.toLowerCase())
+                );
+            }
 
             document.getElementById('contacts-count').innerText = `Chat attive: ${displayList.length}`;
 
@@ -377,7 +408,7 @@
                 div.className = 'chat-item';
                 let label = chatObj.isSaved ? `<b style="color: #000; font-weight: bold;">${chatObj.name}</b>` : `<span style="color:#d9534f; font-weight: bold;">Sconosciuto: ${chatObj.identifier}</span>`;
                 div.innerHTML = `<span>${label}</span> <span style="color:#6c757d; font-size:12px; font-weight:bold;">Apri ➡</span>`;
-                div.onclick = () => openChat({ name: chatObj.name, identifier: chatObj.identifier, isSaved: chatObj.isSaved });
+                div.onclick = () => openChat(chatObj);
                 container.appendChild(div);
             });
         }
@@ -417,7 +448,7 @@
             if(existing) {
                 existing.name = customName;
             } else {
-                contacts.push({ name: customName, identifier: currentChatContact.identifier });
+                contacts.push({ name: customName, identifier: currentChatContact.identifier, isSaved: true });
             }
 
             saveContactsToLocalStorage();
@@ -454,10 +485,12 @@
             box.innerHTML = '';
             if(!currentChatContact || !currentUser) return;
 
-            const chatMessages = messages.filter(m => 
-                (m.sender === currentUser.phone || m.sender === currentUser.name) && m.recipient === currentChatContact.identifier ||
-                m.sender === currentChatContact.identifier && (m.recipient === currentUser.phone || m.recipient === currentUser.name)
-            );
+            const chatMessages = messages.filter(m => {
+                const partnerId = currentChatContact.identifier;
+                const isFromMeToPartner = (m.sender === currentUser.phone || m.sender === currentUser.name) && (m.recipient === partnerId);
+                const isFromPartnerToMe = (m.sender === partnerId) && (m.recipient === currentUser.phone || m.recipient === currentUser.name);
+                return isFromMeToPartner || isFromPartnerToMe;
+            });
 
             chatMessages.forEach(msg => {
                 const isSent = (msg.sender === currentUser.phone || msg.sender === currentUser.name);
