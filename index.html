@@ -198,7 +198,10 @@
 
     <div id="section-profile" class="content-section">
         <div class="section-header">Il Mio Profilo</div>
-        <div class="p-15"><p id="profile-info" style="font-weight: normal; color: #495057;">Nome: - | Tel: -</p></div>
+        <div class="p-15" style="display: flex; flex-direction: column; gap: 15px;">
+            <p id="profile-info" style="font-weight: normal; color: #495057;">Nome: - | Tel: -</p>
+            <button onclick="logoutUser()" style="padding: 12px; background: #dc3545; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; max-width: 200px;">Esci dall'account</button>
+        </div>
     </div>
 
     <nav class="bottom-nav">
@@ -278,6 +281,15 @@
         socket.on('registration_error', (err) => alert(err));
         socket.on('login_success', () => requestAllChatsHistory());
 
+        function logoutUser() {
+            if(confirm("Vuoi davvero uscire dal tuo account?")) {
+                localStorage.removeItem('omega7_user');
+                currentUser = null;
+                document.getElementById('register-screen').style.display = 'flex';
+                window.location.reload();
+            }
+        }
+
         function requestAllChatsHistory() {
             if(!currentUser) return;
             socket.emit('get_all_chats_history', { userPhone: currentUser.phone });
@@ -316,7 +328,7 @@
                 const pId = currentChatContact.phone;
                 if(msg.sender === pId || msg.recipient === pId) {
                     renderMessages();
-                    if(msg.recipient === currentUser.phone) {
+                    if(msg.recipient === currentUser.phone && msg.status !== 'read') {
                         socket.emit('update_status', { messageId: msg.id, status: 'read' });
                     }
                 }
@@ -342,11 +354,24 @@
                 if(!exists) messages.push(dbMsg);
             });
             updateContactsDisplay();
-            if(currentChatContact) renderMessages();
+            if(currentChatContact) {
+                renderMessages();
+                // Segna come letti i messaggi pendenti del partner quando apri la chat
+                chatHistoryMarkRead(history);
+            }
         });
 
+        function chatHistoryMarkRead(history) {
+            history.forEach(m => {
+                let mId = m._id || m.id;
+                if(m.recipient === currentUser.phone && m.status !== 'read') {
+                    socket.emit('update_status', { messageId: mId, status: 'read' });
+                }
+            });
+        }
+
         socket.on('message_status_updated', (data) => {
-            let msg = messages.find(m => m.id === data.messageId || (m.id && m.id.toString() === data.messageId.toString()));
+            let msg = messages.find(m => m.id === data.messageId || m._id === data.messageId || (m.id && m.id.toString() === data.messageId.toString()));
             if(msg) {
                 msg.status = data.status;
                 if(currentChatContact) renderMessages();
@@ -524,15 +549,12 @@
                 let label = chatObj.isSaved ? `<b style="color: #000; font-weight: bold;">${chatObj.name}</b>` : `<span style="color:#d9534f; font-weight: bold;">Sconosciuto: ${chatObj.phone}</span>`;
                 let unreadBadgeHtml = (chatObj.unreadCount > 0) ? `<span class="chat-badge">${chatObj.unreadCount}</span>` : '';
 
-                // Pulsante Modifica ben visibile e protetto da stopPropagation
                 let editBtnHtml = chatObj.isSaved ? `<button type="button" class="edit-btn" style="background:#495057; color:white; border:none; border-radius:6px; padding:10px 14px; font-size:14px; cursor:pointer; margin-right:10px; font-weight:bold;">Modifica</button>` : '';
 
                 div.innerHTML = `<div>${label} ${unreadBadgeHtml}</div> <div style="display:flex; align-items:center;">${editBtnHtml}<span style="color:#6c757d; font-size:13px; font-weight:bold;">Apri ➡</span></div>`;
                 
-                // Evento click principale per aprire la chat
                 div.onclick = () => openChat(chatObj);
 
-                // Gestione click sul tasto modifica corretto e garantito
                 if(chatObj.isSaved) {
                     const btnEdit = div.querySelector('.edit-btn');
                     btnEdit.onclick = (e) => {
@@ -541,10 +563,8 @@
                     };
                 }
 
-                // GESTIONE LONG PRESS PER ELIMINARE IL CONTATTO (Tieni premuto per 600ms)
                 let pressTimer;
                 div.onmousedown = div.ontouchstart = (e) => {
-                    // Non attivare se preme direttamente sul bottone modifica
                     if(e.target.classList.contains('edit-btn')) return;
                     pressTimer = setTimeout(() => {
                         if(confirm(`Vuoi eliminare il contatto "${chatObj.name}" (${chatObj.phone})?`)) {
@@ -750,7 +770,6 @@
 
                 bubble.appendChild(footer);
 
-                // GESTIONE LONG PRESS PER ELIMINARE UN MESSAGGIO INVIATO (Tieni premuto 600ms)
                 if(isSent) {
                     let msgTimer;
                     bubble.onmousedown = bubble.ontouchstart = () => {
