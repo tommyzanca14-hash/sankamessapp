@@ -19,10 +19,17 @@ const io = new Server(server, {
     }
 });
 
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/omega7";
+// Controllo e lettura sicura della variabile d'ambiente per MongoDB Atlas su Render
+const MONGO_URI = process.env.MONGO_URI;
 
-mongoose.connect(MONGO_URI)
-    .then(() => console.log("Connesso a MongoDB con successo"))
+if (!MONGO_URI) {
+    console.error("ATTENZIONE: La variabile d'ambiente MONGO_URI non è impostata correttamente!");
+}
+
+mongoose.connect(MONGO_URI || "mongodb://localhost:27017/omega7", {
+    serverSelectionTimeoutMS: 5000
+})
+    .then(() => console.log("Connesso a MongoDB Atlas con successo"))
     .catch(err => console.error("Errore di connessione a MongoDB:", err));
 
 const userSchema = new mongoose.Schema({
@@ -127,8 +134,6 @@ io.on('connection', (socket) => {
 
     socket.on('send_message', async (msgData) => {
         try {
-            console.log("Messaggio ricevuto dal client:", msgData);
-
             let recipientSocketId = activeUsers.get(msgData.recipient);
             if (!recipientSocketId) {
                 const dbUser = await User.findOne({
@@ -167,7 +172,7 @@ io.on('connection', (socket) => {
                 io.to(recipientSocketId).emit('receive_message', messagePayload);
             }
             
-            // Conferma immediata al mittente per sbloccare il trattino
+            // Conferma immediata al mittente per sbloccare il trattino ed evitare blocchi UI
             socket.emit('receive_message', messagePayload);
 
         } catch (err) {
