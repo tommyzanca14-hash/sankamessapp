@@ -34,7 +34,7 @@
         .chat-header input { width: 100%; padding: 10px 15px; border: 1px solid #ced4da; border-radius: 20px; outline: none; background: #f8f9fa; font-weight: normal; }
         .chat-subbar { display: flex; justify-content: space-between; padding: 10px 15px; background: #e9ecef; font-size: 14px; color: #495057; border-bottom: 1px solid #dee2e6; font-weight: bold; }
         .chat-list { flex: 1; overflow-y: auto; background: white; }
-        .chat-item { padding: 14px 15px; border-bottom: 1px solid #f1f3f5; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+        .chat-item { padding: 14px 15px; border-bottom: 1px solid #f1f3f5; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
         .chat-item:hover { background: #f8f9fa; }
 
         #active-chat-window { display: none; flex-direction: column; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #e5ddd5; z-index: 1500; }
@@ -425,9 +425,46 @@
                 div.className = 'chat-item';
                 let label = chatObj.isSaved ? `<b style="color: #000; font-weight: bold;">${chatObj.name}</b>` : `<span style="color:#d9534f; font-weight: bold;">Sconosciuto: ${chatObj.phone}</span>`;
                 div.innerHTML = `<span>${label}</span> <span style="color:#6c757d; font-size:12px; font-weight:bold;">Apri ➡</span>`;
+                
                 div.onclick = () => openChat(chatObj);
+
+                if (chatObj.isSaved) {
+                    div.oncontextmenu = (e) => {
+                        e.preventDefault();
+                        editContactName(chatObj);
+                    };
+                    let pressTimer;
+                    div.ontouchstart = () => {
+                        pressTimer = setTimeout(() => {
+                            editContactName(chatObj);
+                        }, 800);
+                    };
+                    div.ontouchend = () => {
+                        clearTimeout(pressTimer);
+                    };
+                }
+
                 container.appendChild(div);
             });
+        }
+
+        function editContactName(contact) {
+            let newName = prompt(`Modifica il nome per il contatto (${contact.phone}):`, contact.name);
+            if(newName === null) return;
+
+            newName = newName.trim();
+            if(!newName) return;
+
+            let existing = contacts.find(c => c.phone === contact.phone);
+            if(existing) {
+                existing.name = newName;
+                saveContactsToLocalStorage();
+                updateContactsDisplay();
+                if(currentChatContact && currentChatContact.phone === contact.phone) {
+                    currentChatContact.name = newName;
+                    document.getElementById('chat-partner-name').innerText = newName;
+                }
+            }
         }
 
         function filterChats(val) {
@@ -469,7 +506,7 @@
                 contacts.push({ 
                     name: customName, 
                     phone: currentChatContact.phone, 
-                    realName: currentChatContact.realName,
+                    realName: currentChatContact.realName || currentChatContact.phone,
                     isSaved: true 
                 });
             }
@@ -498,6 +535,17 @@
                 recipient: currentChatContact.phone,
                 text: text
             };
+
+            const localMessagePayload = {
+                id: 'temp_' + Date.now(),
+                sender: currentUser.phone,
+                recipient: currentChatContact.phone,
+                text: text,
+                status: 'local', // Stato iniziale in locale
+                timestamp: new Date()
+            };
+            messages.push(localMessagePayload);
+            renderMessages();
 
             socket.emit('send_message', msgData);
             input.value = '';
@@ -542,14 +590,17 @@
                     let ticksSpan = document.createElement('span');
                     ticksSpan.className = 'status-ticks';
                     let st = msg.status || 'sent';
-                    if(st === 'sent') {
-                        ticksSpan.innerHTML = '✓';
+                    if(st === 'local') {
+                        ticksSpan.innerHTML = '—'; // Linea orizzontale: in locale, non ancora partito/confermato
+                        ticksSpan.className += ' gray';
+                    } else if(st === 'sent') {
+                        ticksSpan.innerHTML = '✓'; // Una spunta: arrivato al server
                         ticksSpan.className += ' gray';
                     } else if(st === 'delivered') {
-                        ticksSpan.innerHTML = '✓✓';
+                        ticksSpan.innerHTML = '✓✓'; // Due spunte grigie: recapitato all'altro
                         ticksSpan.className += ' gray';
                     } else if(st === 'read') {
-                        ticksSpan.innerHTML = '✓✓';
+                        ticksSpan.innerHTML = '✓✓'; // Due spunte blu: letto
                         ticksSpan.className += ' blue';
                     }
                     footer.appendChild(ticksSpan);
