@@ -30,7 +30,6 @@
         .nav-item.active { color: #343a40; }
         .nav-item span { font-size: 22px; margin-bottom: 2px; }
 
-        /* Badge di notifica rosso */
         .nav-badge, .chat-badge {
             position: absolute; top: -2px; right: 5px; background: #dc3545; color: white; 
             border-radius: 50%; padding: 2px 6px; font-size: 10px; font-weight: bold; display: none;
@@ -72,7 +71,6 @@
         .section-header { padding: 15px; background: white; font-size: 18px; font-weight: bold; border-bottom: 1px solid #dee2e6; color: #343a40; }
         .p-15 { padding: 15px; }
 
-        /* Banner di notifica fluttuante in alto */
         #notification-banner {
             position: fixed; top: -60px; left: 50%; transform: translateX(-50%);
             background: #212529; color: white; padding: 12px 20px; border-radius: 8px;
@@ -89,7 +87,7 @@
     <div id="register-screen">
         <h2>Benvenuto su Omega7</h2>
         <p style="margin-bottom: 15px; color: #495057; font-size: 14px; text-align: center;">Inserisci i tuoi dati per iniziare</p>
-        <input type="text" id="reg-name" placeholder="Il tuo Nome (Username unico)" autocomplete="username">
+        <input type="text" id="reg-name" placeholder="Il tuo Nome (Username)" autocomplete="username">
         <input type="tel" id="reg-phone" placeholder="Numero di Telefono">
         <input type="email" id="reg-email" placeholder="Indirizzo Email">
         <button onclick="registerUser()">Registrati ed entra</button>
@@ -117,8 +115,8 @@
                 <span id="chat-partner-name" style="font-weight: bold;">Nome Amico</span>
             </div>
             <div style="display:flex; gap: 15px; align-items:center;">
-                <button onclick="startCall('audio')" style="background:none; border:none; color:white; font-size:24px; cursor:pointer;" title="Chiamata Audio">📞</button>
-                <button onclick="startCall('video')" style="background:none; border:none; color:white; font-size:24px; cursor:pointer;" title="Videochiamata">📹</button>
+                <button onclick="startCall('audio')" style="background:none; border:none; color:white; font-size:20px; cursor:pointer;" title="Chiamata Audio">📞</button>
+                <button onclick="startCall('video')" style="background:none; border:none; color:white; font-size:20px; cursor:pointer;" title="Videochiamata">📹</button>
                 <button onclick="quickSaveContact()" id="quick-save-btn" style="background:#495057; color:white; border:none; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; display:none; font-weight:bold;">Salva Contatto</button>
             </div>
         </div>
@@ -190,36 +188,31 @@
         const rtcConfig = { 
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' }
+                { urls: 'stun:stun1.l.google.com:19302' }
             ] 
         };
 
-        // Funzione per generare un suono di notifica acustico sintetizzato (senza file esterni)
         function playNotificationSound() {
             try {
                 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
                 osc.type = 'sine';
-                osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // Nota D5
+                osc.frequency.setValueAtTime(587.33, audioCtx.currentTime);
                 gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.3);
                 osc.connect(gain);
                 gain.connect(audioCtx.destination);
                 osc.start();
                 osc.stop(audioCtx.currentTime + 0.3);
-            } catch(e) { console.log("Audio non supportato o bloccato dal browser", e); }
+            } catch(e) {}
         }
 
-        // Funzione per mostrare un banner di notifica visivo in alto
         function showNotificationBanner(text) {
             const banner = document.getElementById('notification-banner');
             banner.innerText = text;
             banner.classList.add('show');
-            setTimeout(() => {
-                banner.classList.remove('show');
-            }, 3500);
+            setTimeout(() => banner.classList.remove('show'), 3500);
         }
 
         window.onload = () => {
@@ -229,7 +222,7 @@
                 loadLocalStorageData();
                 document.getElementById('profile-info').innerText = `Username: ${currentUser.name} | Tel: ${currentUser.phone} | Email: ${currentUser.email}`;
                 document.getElementById('register-screen').style.display = 'none';
-                socket.emit('login_user', { phone: currentUser.phone, name: currentUser.name, email: currentUser.email });
+                socket.emit('login_user', { phone: currentUser.phone });
                 requestAllChatsHistory();
                 updateContactsDisplay();
             }
@@ -241,23 +234,17 @@
             loadLocalStorageData();
             document.getElementById('profile-info').innerText = `Username: ${currentUser.name} | Tel: ${currentUser.phone} | Email: ${currentUser.email}`;
             document.getElementById('register-screen').style.display = 'none';
-            socket.emit('login_user', { phone: currentUser.phone, name: currentUser.name, email: currentUser.email });
+            socket.emit('login_user', { phone: currentUser.phone });
             requestAllChatsHistory();
             updateContactsDisplay();
         });
 
-        socket.on('registration_error', (err) => {
-            alert(err);
-        });
-
-        socket.on('login_success', (userData) => {
-            console.log("Connesso al server con successo.");
-            requestAllChatsHistory();
-        });
+        socket.on('registration_error', (err) => alert(err));
+        socket.on('login_success', () => requestAllChatsHistory());
 
         function requestAllChatsHistory() {
             if(!currentUser) return;
-            socket.emit('get_all_chats_history', { userPhone: currentUser.phone, userName: currentUser.name });
+            socket.emit('get_all_chats_history', { userPhone: currentUser.phone });
         }
 
         function loadLocalStorageData() {
@@ -273,7 +260,6 @@
 
         socket.on('receive_message', (msg) => {
             if(!currentUser) return;
-            
             msg.id = msg.id || msg._id;
             let existingIndex = messages.findIndex(m => m.id === msg.id || (m.id && m.id.toString() === msg.id.toString()));
             
@@ -281,12 +267,10 @@
                 messages[existingIndex] = msg; 
             } else {
                 messages.push(msg);
-                
-                // GESTIONE NOTIFICHE (Se il messaggio non è inviato da me)
-                const isFromMe = (msg.sender === currentUser.phone || msg.sender === currentUser.name);
+                const isFromMe = (msg.sender === currentUser.phone);
                 if (!isFromMe) {
                     playNotificationSound();
-                    showNotificationBanner(`Nuovo messaggio da: ${msg.sender}`);
+                    showNotificationBanner(`Nuovo messaggio ricevuto`);
                 }
             }
 
@@ -294,10 +278,9 @@
             
             if(currentChatContact) {
                 const pId = currentChatContact.phone;
-                const pName = currentChatContact.realName || currentChatContact.name;
-                if(msg.sender === pId || msg.sender === pName || msg.recipient === pId || msg.recipient === pName) {
+                if(msg.sender === pId || msg.recipient === pId) {
                     renderMessages();
-                    if(msg.recipient === currentUser.phone || msg.recipient === currentUser.name) {
+                    if(msg.recipient === currentUser.phone) {
                         socket.emit('update_status', { messageId: msg.id, status: 'read' });
                     }
                 }
@@ -309,14 +292,10 @@
             history.forEach(dbMsg => {
                 dbMsg.id = dbMsg._id || dbMsg.id;
                 let exists = messages.some(m => m.id === dbMsg.id || (m.id && m.id.toString() === dbMsg.id.toString()));
-                if(!exists) {
-                    messages.push(dbMsg);
-                }
+                if(!exists) messages.push(dbMsg);
             });
             updateContactsDisplay();
-            if(currentChatContact) {
-                renderMessages();
-            }
+            if(currentChatContact) renderMessages();
         });
 
         socket.on('chat_history', (history) => {
@@ -324,14 +303,10 @@
             history.forEach(dbMsg => {
                 dbMsg.id = dbMsg._id || dbMsg.id;
                 let exists = messages.some(m => m.id === dbMsg.id || (m.id && m.id.toString() === dbMsg.id.toString()));
-                if(!exists) {
-                    messages.push(dbMsg);
-                }
+                if(!exists) messages.push(dbMsg);
             });
             updateContactsDisplay();
-            if(currentChatContact) {
-                renderMessages();
-            }
+            if(currentChatContact) renderMessages();
         });
 
         socket.on('message_status_updated', (data) => {
@@ -353,32 +328,24 @@
             document.getElementById('call-window').style.display = 'flex';
         });
 
-        socket.on('call_failed', (data) => {
-            alert(data.reason);
-            closeCallWindow();
-        });
+        socket.on('call_failed', (data) => { alert(data.reason); closeCallWindow(); });
 
         socket.on('call_accepted', async (data) => {
             if(peerConnection) {
                 try {
-                    const remoteDesc = new RTCSessionDescription(data.signal);
-                    await peerConnection.setRemoteDescription(remoteDesc);
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signal));
                     document.getElementById('call-status-text').innerText = "Chiamata in corso";
-                } catch(e) { console.error("Errore setRemoteDescription:", e); }
+                } catch(e) {}
             }
         });
 
         socket.on('ice_candidate', async (data) => {
             if(peerConnection && data.signal) {
-                try {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(data.signal));
-                } catch(e) { console.error("Errore aggiunta ICE candidate:", e); }
+                try { await peerConnection.addIceCandidate(new RTCIceCandidate(data.signal)); } catch(e) {}
             }
         });
 
-        socket.on('call_ended', () => {
-            closeCallWindow();
-        });
+        socket.on('call_ended', () => closeCallWindow());
 
         function registerUser() {
             const name = document.getElementById('reg-name').value.trim();
@@ -411,9 +378,7 @@
             socket.emit('lookup_contact', identifier, (response) => {
                 if(response.success) {
                     const realUser = response.user;
-                    const phoneKey = realUser.phone;
-
-                    let existing = contacts.find(c => c.phone === phoneKey);
+                    let existing = contacts.find(c => c.phone === realUser.phone);
                     
                     if(existing) {
                         existing.name = nickname;
@@ -457,10 +422,10 @@
             });
 
             messages.forEach(m => {
-                let isMe = (m.sender === currentUser.phone || m.sender === currentUser.name);
+                let isMe = (m.sender === currentUser.phone);
                 let other = isMe ? m.recipient : m.sender;
                 
-                if(other && other !== currentUser.phone && other !== currentUser.name) {
+                if(other && other !== currentUser.phone) {
                     let entry = null;
                     for(let [phoneKey, val] of activeMap.entries()) {
                         if(phoneKey === other || val.realName === other) {
@@ -480,7 +445,6 @@
                         activeMap.set(other, entry);
                     }
 
-                    // Conta messaggi non letti ricevuti
                     if(!isMe && m.status !== 'read' && (!currentChatContact || currentChatContact.phone !== entry.phone)) {
                         entry.unreadCount = (entry.unreadCount || 0) + 1;
                     }
@@ -492,14 +456,12 @@
             if(filterText) {
                 displayList = displayList.filter(item => 
                     item.name.toLowerCase().includes(filterText.toLowerCase()) || 
-                    item.phone.toLowerCase().includes(filterText.toLowerCase()) ||
-                    (item.realName && item.realName.toLowerCase().includes(filterText.toLowerCase()))
+                    item.phone.toLowerCase().includes(filterText.toLowerCase())
                 );
             }
 
             document.getElementById('contacts-count').innerText = `Chat attive: ${displayList.length}`;
 
-            // Aggiorna badge generale sulla navbar
             let totalUnread = displayList.reduce((sum, item) => sum + (item.unreadCount || 0), 0);
             const badgeChats = document.getElementById('badge-chats');
             if(totalUnread > 0) {
@@ -523,55 +485,38 @@
                 const div = document.createElement('div');
                 div.className = 'chat-item';
                 let label = chatObj.isSaved ? `<b style="color: #000; font-weight: bold;">${chatObj.name}</b>` : `<span style="color:#d9534f; font-weight: bold;">Sconosciuto: ${chatObj.phone}</span>`;
-                
                 let unreadBadgeHtml = (chatObj.unreadCount > 0) ? `<span class="chat-badge">${chatObj.unreadCount}</span>` : '';
 
-                div.innerHTML = `<div>${label} ${unreadBadgeHtml}</div> <span style="color:#6c757d; font-size:12px; font-weight:bold;">Apri ➡</span>`;
-                
-                div.onclick = () => openChat(chatObj);
+                // Aggiunto pulsante di modifica diretto (perfetto per mobile senza problemi di long press)
+                let editBtnHtml = chatObj.isSaved ? `<button onclick="event.stopPropagation(); editContactNameByPhone('${chatObj.phone}')" style="background:#6c757d; color:white; border:none; border-radius:4px; padding:4px 8px; font-size:11px; cursor:pointer; margin-right:8px;">Modifica</button>` : '';
 
-                if (chatObj.isSaved) {
-                    div.oncontextmenu = (e) => {
-                        e.preventDefault();
-                        editContactName(chatObj);
-                    };
-                    let pressTimer;
-                    div.ontouchstart = () => {
-                        pressTimer = setTimeout(() => {
-                            editContactName(chatObj);
-                        }, 800);
-                    };
-                    div.ontouchend = () => {
-                        clearTimeout(pressTimer);
-                    };
-                }
+                div.innerHTML = `<div>${label} ${unreadBadgeHtml}</div> <div style="display:flex; align-items:center;">${editBtnHtml}<span style="color:#6c757d; font-size:12px; font-weight:bold;">Apri ➡</span></div>`;
+                div.onclick = () => openChat(chatObj);
 
                 container.appendChild(div);
             });
         }
 
-        function editContactName(contact) {
-            let newName = prompt(`Modifica il nome per il contatto (${contact.phone}):`, contact.name);
+        function editContactNameByPhone(phone) {
+            let contact = contacts.find(c => c.phone === phone);
+            if(!contact) return;
+
+            let newName = prompt(`Modifica il nome per il contatto (${phone}):`, contact.name);
             if(newName === null) return;
 
             newName = newName.trim();
             if(!newName) return;
 
-            let existing = contacts.find(c => c.phone === contact.phone);
-            if(existing) {
-                existing.name = newName;
-                saveContactsToLocalStorage();
-                updateContactsDisplay();
-                if(currentChatContact && currentChatContact.phone === contact.phone) {
-                    currentChatContact.name = newName;
-                    document.getElementById('chat-partner-name').innerText = newName;
-                }
+            contact.name = newName;
+            saveContactsToLocalStorage();
+            updateContactsDisplay();
+            if(currentChatContact && currentChatContact.phone === phone) {
+                currentChatContact.name = newName;
+                document.getElementById('chat-partner-name').innerText = newName;
             }
         }
 
-        function filterChats(val) {
-            updateContactsDisplay(val);
-        }
+        function filterChats(val) { updateContactsDisplay(val); }
 
         function toggleSort() {
             isAlphabetical = !isAlphabetical;
@@ -594,7 +539,7 @@
 
             renderMessages();
             document.getElementById('active-chat-window').style.display = 'flex';
-            updateContactsDisplay(); // Aggiorna i badge dei non letti
+            updateContactsDisplay();
         }
 
         function quickSaveContact() {
@@ -615,7 +560,6 @@
             }
 
             saveContactsToLocalStorage();
-
             currentChatContact.name = customName;
             currentChatContact.isSaved = true;
             document.getElementById('chat-partner-name').innerText = customName;
@@ -634,14 +578,16 @@
             const text = input.value.trim();
             if(!text || !currentChatContact || !currentUser) return;
 
+            const tempId = 'temp_' + Date.now();
             const msgData = {
                 sender: currentUser.phone,
                 recipient: currentChatContact.phone,
-                text: text
+                text: text,
+                tempId: tempId
             };
 
             const localMessagePayload = {
-                id: 'temp_' + Date.now(),
+                id: tempId,
                 sender: currentUser.phone,
                 recipient: currentChatContact.phone,
                 text: text,
@@ -653,11 +599,15 @@
             renderMessages();
             input.value = '';
 
-            if (!socket.connected) {
-                socket.connect();
-            }
-
-            socket.emit('send_message', msgData);
+            socket.emit('send_message', msgData, (response) => {
+                if(response && response.success) {
+                    let idx = messages.findIndex(m => m.id === response.tempId);
+                    if(idx !== -1) {
+                        messages[idx] = response.message;
+                        renderMessages();
+                    }
+                }
+            });
         }
 
         function renderMessages() {
@@ -666,20 +616,18 @@
             if(!currentChatContact || !currentUser) return;
 
             const pPhone = currentChatContact.phone;
-            const pRealName = currentChatContact.realName;
 
             const chatMessages = messages.filter(m => {
-                const isFromMe = (m.sender === currentUser.phone || m.sender === currentUser.name);
-                const isToMe = (m.recipient === currentUser.phone || m.recipient === currentUser.name);
-                
-                const isToPartner = (m.recipient === pPhone || m.recipient === pRealName || (pRealName && m.recipient === pRealName));
-                const isFromPartner = (m.sender === pPhone || m.sender === pRealName || (pRealName && m.sender === pRealName));
+                const isFromMe = (m.sender === currentUser.phone);
+                const isToMe = (m.recipient === currentUser.phone);
+                const isToPartner = (m.recipient === pPhone);
+                const isFromPartner = (m.sender === pPhone);
 
                 return (isFromMe && isToPartner) || (isFromPartner && isToMe);
             });
 
             chatMessages.forEach(msg => {
-                const isSent = (msg.sender === currentUser.phone || msg.sender === currentUser.name);
+                const isSent = (msg.sender === currentUser.phone);
                 const bubble = document.createElement('div');
                 bubble.className = 'message-bubble ' + (isSent ? 'sent' : 'received');
                 
@@ -690,7 +638,7 @@
                 let footer = document.createElement('div');
                 footer.className = 'message-footer';
                 
-                let timeStr = new Date(msg.timestamp || msg.time || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                let timeStr = new Date(msg.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 let timeSpan = document.createElement('span');
                 timeSpan.innerText = timeStr;
                 footer.appendChild(timeSpan);
@@ -734,9 +682,7 @@
                     video: callType === 'video' ? { width: { ideal: 640 }, height: { ideal: 480 } } : false 
                 });
                 
-                const localVideo = document.getElementById('local-video');
-                localVideo.srcObject = localStream;
-
+                document.getElementById('local-video').srcObject = localStream;
                 createPeerConnection();
                 localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
@@ -751,7 +697,6 @@
                     callType: callType
                 });
             } catch (err) {
-                console.error("Errore accesso media:", err);
                 alert("Impossibile accedere a microfono o fotocamera.");
                 closeCallWindow();
             }
@@ -767,9 +712,7 @@
                     video: incomingCallData.callType === 'video' ? { width: { ideal: 640 }, height: { ideal: 480 } } : false 
                 });
                 
-                const localVideo = document.getElementById('local-video');
-                localVideo.srcObject = localStream;
-
+                document.getElementById('local-video').srcObject = localStream;
                 createPeerConnection();
                 localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
@@ -782,26 +725,19 @@
                     signal: answer
                 });
             } catch (err) {
-                console.error("Errore accettazione chiamata:", err);
                 closeCallWindow();
             }
         }
 
         function createPeerConnection() {
-            if (peerConnection) {
-                peerConnection.close();
-            }
-            
+            if (peerConnection) peerConnection.close();
             peerConnection = new RTCPeerConnection(rtcConfig);
 
             peerConnection.onicecandidate = (event) => {
                 if(event.candidate) {
                     let targetIdentifier = currentChatContact ? currentChatContact.phone : (incomingCallData ? incomingCallData.fromPhone : null);
                     if(targetIdentifier) {
-                        socket.emit('ice_candidate', {
-                            toIdentifier: targetIdentifier,
-                            signal: event.candidate
-                        });
+                        socket.emit('ice_candidate', { toIdentifier: targetIdentifier, signal: event.candidate });
                     }
                 }
             };
@@ -810,7 +746,7 @@
                 const remoteVideo = document.getElementById('remote-video');
                 if (event.streams && event.streams[0]) {
                     remoteVideo.srcObject = event.streams[0];
-                    remoteVideo.play().catch(e => console.log("Autoplay attesa interazione", e));
+                    remoteVideo.play().catch(e => {});
                 }
                 document.getElementById('call-status-text').innerText = "Chiamata in corso (Connesso)";
             };
@@ -818,20 +754,13 @@
 
         function endCall() {
             let targetIdentifier = currentChatContact ? currentChatContact.phone : (incomingCallData ? incomingCallData.fromPhone : null);
-            if(targetIdentifier) {
-                socket.emit('hang_up', { toIdentifier: targetIdentifier });
-            }
+            if(targetIdentifier) socket.emit('hang_up', { toIdentifier: targetIdentifier });
             closeCallWindow();
         }
 
         function closeCallWindow() {
-            if(localStream) {
-                localStream.getTracks().forEach(track => track.stop());
-            }
-            if(peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
-            }
+            if(localStream) localStream.getTracks().forEach(track => track.stop());
+            if(peerConnection) { peerConnection.close(); peerConnection = null; }
             document.getElementById('call-window').style.display = 'none';
             document.getElementById('local-video').srcObject = null;
             document.getElementById('remote-video').srcObject = null;
