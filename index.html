@@ -40,7 +40,7 @@
         .chat-header input { width: 100%; padding: 10px 15px; border: 1px solid #ced4da; border-radius: 20px; outline: none; background: #f8f9fa; font-weight: normal; }
         .chat-subbar { display: flex; justify-content: space-between; padding: 10px 15px; background: #e9ecef; font-size: 14px; color: #495057; border-bottom: 1px solid #dee2e6; font-weight: bold; }
         .chat-list { flex: 1; overflow-y: auto; background: white; }
-        .chat-item { padding: 14px 15px; border-bottom: 1px solid #f1f3f5; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
+        .chat-item { padding: 16px 15px; border-bottom: 1px solid #f1f3f5; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
         .chat-item:hover { background: #f8f9fa; }
 
         #active-chat-window { display: none; flex-direction: column; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #e5ddd5; z-index: 1500; }
@@ -78,11 +78,48 @@
             transition: top 0.3s ease; text-align: center; max-width: 90%;
         }
         #notification-banner.show { top: 15px; }
+
+        /* Stile Modal Info Contatto & Menu a tendina */
+        #contact-info-modal {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); z-index: 3500; justify-content: center; align-items: center; padding: 20px;
+        }
+        .modal-content {
+            background: white; width: 100%; max-width: 320px; border-radius: 12px; padding: 20px;
+            display: flex; flex-direction: column; gap: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+        .modal-content h3 { font-size: 18px; color: #333; border-bottom: 1px solid #dee2e6; padding-bottom: 10px; }
+        .modal-info-row { font-size: 14px; color: #495057; font-weight: normal; display: flex; flex-direction: column; gap: 4px; }
+        .modal-info-row b { color: #212529; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
     </style>
 </head>
 <body>
 
     <div id="notification-banner">Notifica</div>
+
+    <!-- Modale Informazioni Contatto (Menu a 3 puntini) -->
+    <div id="contact-info-modal">
+        <div class="modal-content">
+            <h3>Informazioni Contatto</h3>
+            <div class="modal-info-row">
+                <b>Nome in Rubrica</b>
+                <span id="modal-contact-nickname">-</span>
+            </div>
+            <div class="modal-info-row">
+                <b>Username (Nome Reale)</b>
+                <span id="modal-contact-username">-</span>
+            </div>
+            <div class="modal-info-row">
+                <b>Numero di Telefono</b>
+                <span id="modal-contact-phone">-</span>
+            </div>
+            <div class="modal-info-row">
+                <b>Email</b>
+                <span id="modal-contact-email">-</span>
+            </div>
+            <button onclick="closeContactInfoModal()" style="margin-top: 10px; padding: 10px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">Chiudi</button>
+        </div>
+    </div>
 
     <div id="register-screen">
         <h2>Benvenuto su Omega7</h2>
@@ -114,10 +151,12 @@
                 <button onclick="closeChat()" style="background:none; border:none; color:white; font-size:18px; cursor:pointer; font-weight:bold;">⬅</button>
                 <span id="chat-partner-name" style="font-weight: bold;">Nome Amico</span>
             </div>
-            <div style="display:flex; gap: 15px; align-items:center;">
+            <div style="display:flex; gap: 12px; align-items:center;">
                 <button onclick="startCall('audio')" style="background:none; border:none; color:white; font-size:20px; cursor:pointer;" title="Chiamata Audio">📞</button>
                 <button onclick="startCall('video')" style="background:none; border:none; color:white; font-size:20px; cursor:pointer;" title="Videochiamata">📹</button>
-                <button onclick="quickSaveContact()" id="quick-save-btn" style="background:#495057; color:white; border:none; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; display:none; font-weight:bold;">Salva Contatto</button>
+                <button onclick="quickSaveContact()" id="quick-save-btn" style="background:#495057; color:white; border:none; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; display:none; font-weight:bold;">Salva</button>
+                <!-- Menu a 3 puntini -->
+                <button onclick="openContactInfoModal()" style="background:none; border:none; color:white; font-size:22px; cursor:pointer; font-weight:bold; padding: 0 4px;" title="Informazioni Contatto">⠇</button>
             </div>
         </div>
         <div class="active-chat-messages" id="messages-box"></div>
@@ -381,20 +420,19 @@
                     let existing = contacts.find(c => c.phone === realUser.phone);
                     
                     if(existing) {
-                        existing.name = nickname;
-                        existing.realName = realUser.name;
-                        existing.isSaved = true;
+                        alert(`Contatto già registrato, nome: ${existing.name}`);
                     } else {
                         contacts.push({ 
                             name: nickname, 
                             phone: realUser.phone, 
+                            email: realUser.email,
                             realName: realUser.name,
                             isSaved: true 
                         });
+                        saveContactsToLocalStorage();
+                        updateContactsDisplay();
+                        alert(`Contatto salvato con successo come: ${nickname}`);
                     }
-
-                    saveContactsToLocalStorage();
-                    updateContactsDisplay();
 
                     document.getElementById('new-contact-identifier').value = '';
                     document.getElementById('new-contact-nickname').value = '';
@@ -415,6 +453,7 @@
                 activeMap.set(c.phone, { 
                     name: c.name, 
                     phone: c.phone, 
+                    email: c.email || 'N/D',
                     realName: c.realName, 
                     isSaved: true,
                     unreadCount: 0
@@ -438,6 +477,7 @@
                         entry = { 
                             name: other, 
                             phone: other, 
+                            email: 'N/D',
                             realName: other, 
                             isSaved: false,
                             unreadCount: 0
@@ -487,10 +527,10 @@
                 let label = chatObj.isSaved ? `<b style="color: #000; font-weight: bold;">${chatObj.name}</b>` : `<span style="color:#d9534f; font-weight: bold;">Sconosciuto: ${chatObj.phone}</span>`;
                 let unreadBadgeHtml = (chatObj.unreadCount > 0) ? `<span class="chat-badge">${chatObj.unreadCount}</span>` : '';
 
-                // Aggiunto pulsante di modifica diretto (perfetto per mobile senza problemi di long press)
-                let editBtnHtml = chatObj.isSaved ? `<button onclick="event.stopPropagation(); editContactNameByPhone('${chatObj.phone}')" style="background:#6c757d; color:white; border:none; border-radius:4px; padding:4px 8px; font-size:11px; cursor:pointer; margin-right:8px;">Modifica</button>` : '';
+                // Pulsante Modifica ingrandito e reso molto più chiaro e cliccabile
+                let editBtnHtml = chatObj.isSaved ? `<button onclick="event.stopPropagation(); editContactNameByPhone('${chatObj.phone}')" style="background:#495057; color:white; border:none; border-radius:6px; padding:8px 12px; font-size:13px; cursor:pointer; margin-right:10px; font-weight:bold;">Modifica</button>` : '';
 
-                div.innerHTML = `<div>${label} ${unreadBadgeHtml}</div> <div style="display:flex; align-items:center;">${editBtnHtml}<span style="color:#6c757d; font-size:12px; font-weight:bold;">Apri ➡</span></div>`;
+                div.innerHTML = `<div>${label} ${unreadBadgeHtml}</div> <div style="display:flex; align-items:center;">${editBtnHtml}<span style="color:#6c757d; font-size:13px; font-weight:bold;">Apri ➡</span></div>`;
                 div.onclick = () => openChat(chatObj);
 
                 container.appendChild(div);
@@ -501,7 +541,7 @@
             let contact = contacts.find(c => c.phone === phone);
             if(!contact) return;
 
-            let newName = prompt(`Modifica il nome per il contatto (${phone}):`, contact.name);
+            let newName = prompt(`Modifica il nome in rubrica per (${phone}):`, contact.name);
             if(newName === null) return;
 
             newName = newName.trim();
@@ -525,6 +565,13 @@
         }
 
         function openChat(contact) {
+            // Se il contatto è nei salvati, recuperiamo email e realName aggiornati
+            let saved = contacts.find(c => c.phone === contact.phone);
+            if(saved) {
+                contact.email = saved.email || 'N/D';
+                contact.realName = saved.realName || contact.realName;
+            }
+
             currentChatContact = contact;
             document.getElementById('chat-partner-name').innerText = contact.name;
             
@@ -542,6 +589,19 @@
             updateContactsDisplay();
         }
 
+        function openContactInfoModal() {
+            if(!currentChatContact) return;
+            document.getElementById('modal-contact-nickname').innerText = currentChatContact.name || 'Non salvato';
+            document.getElementById('modal-contact-username').innerText = currentChatContact.realName || currentChatContact.name;
+            document.getElementById('modal-contact-phone').innerText = currentChatContact.phone;
+            document.getElementById('modal-contact-email').innerText = currentChatContact.email || 'N/D';
+            document.getElementById('contact-info-modal').style.display = 'flex';
+        }
+
+        function closeContactInfoModal() {
+            document.getElementById('contact-info-modal').style.display = 'none';
+        }
+
         function quickSaveContact() {
             let customName = prompt("Inserisci il nome in rubrica per:", currentChatContact.phone);
             if(!customName) return;
@@ -554,6 +614,7 @@
                 contacts.push({ 
                     name: customName, 
                     phone: currentChatContact.phone, 
+                    email: currentChatContact.email || 'N/D',
                     realName: currentChatContact.realName || currentChatContact.phone,
                     isSaved: true 
                 });
