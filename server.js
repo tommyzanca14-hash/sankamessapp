@@ -60,13 +60,21 @@ io.on('connection', (socket) => {
             }
 
             let cleanPhone = data.phone.trim();
+            let cleanEmail = data.email ? data.email.trim() : "noemail@omega.com";
+            let cleanName = data.name.trim();
+
             let user = await User.findOne({ phone: cleanPhone });
             if (!user) {
                 user = new User({
-                    name: data.name.trim(),
+                    name: cleanName,
                     phone: cleanPhone,
-                    email: data.email ? data.email.trim() : "noemail@omega.com"
+                    email: cleanEmail
                 });
+                await user.save();
+            } else {
+                // Aggiorna i dati se l'utente esiste già ma fa una nuova registrazione pulita
+                user.name = cleanName;
+                user.email = cleanEmail;
                 await user.save();
             }
 
@@ -158,7 +166,6 @@ io.on('connection', (socket) => {
                 io.to(recipientSocketId).emit('receive_message', messagePayload);
             }
             
-            // Restituisce l'ID reale al mittente per evitare duplicati
             if(typeof callback === 'function') {
                 callback({ success: true, message: messagePayload, tempId: msgData.tempId });
             }
@@ -207,8 +214,16 @@ io.on('connection', (socket) => {
 
     socket.on('update_status', async (data) => {
         try {
-            await Message.findByIdAndUpdate(data.messageId, { status: data.status });
-            io.emit('message_status_updated', { messageId: data.messageId, status: data.status });
+            const updatedMsg = await Message.findByIdAndUpdate(data.messageId, { status: data.status }, { new: true });
+            if (updatedMsg) {
+                // Notifica sia il mittente che il destinatario per aggiornare le spunte blu in tempo reale
+                let senderSocketId = activeUsers.get(updatedMsg.sender);
+                let recipientSocketId = activeUsers.get(updatedMsg.recipient);
+                
+                const payload = { messageId: data.messageId, status: data.status };
+                if (senderSocketId) io.to(senderSocketId).emit('message_status_updated', payload);
+                if (recipientSocketId) io.to(recipientSocketId).emit('message_status_updated', payload);
+            }
         } catch (err) {
             console.error("Errore aggiornamento stato:", err);
         }
