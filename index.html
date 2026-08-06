@@ -541,14 +541,20 @@
                 sender: currentUser.phone,
                 recipient: currentChatContact.phone,
                 text: text,
-                status: 'local', // Stato iniziale in locale
+                status: 'local', 
                 timestamp: new Date()
             };
+            
             messages.push(localMessagePayload);
             renderMessages();
+            input.value = '';
+
+            // Se il socket si era disconnesso (es. sleep di Render), lo riconnette al volo
+            if (!socket.connected) {
+                socket.connect();
+            }
 
             socket.emit('send_message', msgData);
-            input.value = '';
         }
 
         function renderMessages() {
