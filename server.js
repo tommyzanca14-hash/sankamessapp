@@ -19,7 +19,6 @@ const io = new Server(server, {
     }
 });
 
-// Controllo e lettura sicura della variabile d'ambiente per MongoDB Atlas su Render
 const MONGO_URI = process.env.MONGO_URI;
 
 if (!MONGO_URI) {
@@ -60,22 +59,22 @@ io.on('connection', (socket) => {
                 return;
             }
 
-            let user = await User.findOne({ phone: data.phone.trim() });
+            let cleanPhone = data.phone.trim();
+            let user = await User.findOne({ phone: cleanPhone });
             if (!user) {
                 user = new User({
                     name: data.name.trim(),
-                    phone: data.phone.trim(),
+                    phone: cleanPhone,
                     email: data.email ? data.email.trim() : "noemail@omega.com"
                 });
                 await user.save();
             }
 
             activeUsers.set(user.phone, socket.id);
-            activeUsers.set(user.name, socket.id);
             socket.userPhone = user.phone;
             socket.emit('registration_success', user);
 
-            const pending = await Message.find({ recipient: { $in: [user.phone, user.name] }, status: 'sent' });
+            const pending = await Message.find({ recipient: user.phone, status: 'sent' });
             for (let msg of pending) {
                 socket.emit('receive_message', msg);
                 msg.status = 'delivered';
@@ -83,20 +82,20 @@ io.on('connection', (socket) => {
             }
         } catch (err) {
             console.error("Errore registrazione:", err);
-            socket.emit('registration_error', 'Errore del server.');
+            socket.emit('registration_error', 'Errore del server o numero già registrato.');
         }
     });
 
     socket.on('login_user', async (data) => {
         try {
+            if(!data || !data.phone) return;
             let user = await User.findOne({ phone: data.phone.trim() });
             if (user) {
                 activeUsers.set(user.phone, socket.id);
-                activeUsers.set(user.name, socket.id);
                 socket.userPhone = user.phone;
                 socket.emit('login_success', user);
 
-                const pending = await Message.find({ recipient: { $in: [user.phone, user.name] }, status: 'sent' });
+                const pending = await Message.find({ recipient: user.phone, status: 'sent' });
                 for (let msg of pending) {
                     socket.emit('receive_message', msg);
                     msg.status = 'delivered';
@@ -132,22 +131,9 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('send_message', async (msgData) => {
+    socket.on('send_message', async (msgData, callback) => {
         try {
             let recipientSocketId = activeUsers.get(msgData.recipient);
-            if (!recipientSocketId) {
-                const dbUser = await User.findOne({
-                    $or: [
-                        { phone: msgData.recipient }, 
-                        { name: msgData.recipient }, 
-                        { email: msgData.recipient }
-                    ]
-                });
-                if (dbUser) {
-                    recipientSocketId = activeUsers.get(dbUser.phone) || activeUsers.get(dbUser.name);
-                }
-            }
-
             const isOnline = recipientSocketId && io.sockets.sockets.has(recipientSocketId);
 
             const newMessage = new Message({
@@ -172,12 +158,16 @@ io.on('connection', (socket) => {
                 io.to(recipientSocketId).emit('receive_message', messagePayload);
             }
             
-            // Conferma immediata al mittente per sbloccare il trattino ed evitare blocchi UI
-            socket.emit('receive_message', messagePayload);
+            // Restituisce l'ID reale al mittente per evitare duplicati
+            if(typeof callback === 'function') {
+                callback({ success: true, message: messagePayload, tempId: msgData.tempId });
+            }
 
         } catch (err) {
             console.error("Errore invio messaggio:", err);
-            socket.emit('message_error', { error: "Errore durante l'invio del messaggio" });
+            if(typeof callback === 'function') {
+                callback({ success: false });
+            }
         }
     });
 
@@ -200,13 +190,11 @@ io.on('connection', (socket) => {
 
     socket.on('get_all_chats_history', async (data) => {
         try {
-            const { userPhone, userName } = data;
+            const { userPhone } = data;
             const history = await Message.find({
                 $or: [
                     { sender: userPhone },
-                    { recipient: userPhone },
-                    { sender: userName },
-                    { recipient: userName }
+                    { recipient: userPhone }
                 ]
             }).sort({ timestamp: 1 });
 
