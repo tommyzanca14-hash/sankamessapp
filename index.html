@@ -47,7 +47,7 @@
         .active-chat-header { background: #6c757d; color: white; display: flex; align-items: center; justify-content: space-between; padding: 12px 15px; font-weight: bold; font-size: 16px; flex-shrink: 0; }
         .active-chat-messages { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; background: #eef9f0; }
         
-        .message-bubble { max-width: 75%; padding: 10px 14px; border-radius: 10px; font-size: 14px; word-wrap: break-word; display: flex; flex-direction: column; gap: 4px; font-weight: normal; }
+        .message-bubble { max-width: 75%; padding: 10px 14px; border-radius: 10px; font-size: 14px; word-wrap: break-word; display: flex; flex-direction: column; gap: 4px; font-weight: normal; user-select: none; }
         .message-bubble.sent { background: #d4edda; align-self: flex-end; color: #155724; }
         .message-bubble.received { background: white; align-self: flex-start; color: #212529; }
         .message-footer { display: flex; justify-content: flex-end; align-items: center; gap: 4px; font-size: 11px; }
@@ -79,7 +79,6 @@
         }
         #notification-banner.show { top: 15px; }
 
-        /* Stile Modal Info Contatto & Menu a tendina */
         #contact-info-modal {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.5); z-index: 3500; justify-content: center; align-items: center; padding: 20px;
@@ -97,7 +96,6 @@
 
     <div id="notification-banner">Notifica</div>
 
-    <!-- Modale Informazioni Contatto (Menu a 3 puntini) -->
     <div id="contact-info-modal">
         <div class="modal-content">
             <h3>Informazioni Contatto</h3>
@@ -155,7 +153,6 @@
                 <button onclick="startCall('audio')" style="background:none; border:none; color:white; font-size:20px; cursor:pointer;" title="Chiamata Audio">📞</button>
                 <button onclick="startCall('video')" style="background:none; border:none; color:white; font-size:20px; cursor:pointer;" title="Videochiamata">📹</button>
                 <button onclick="quickSaveContact()" id="quick-save-btn" style="background:#495057; color:white; border:none; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; display:none; font-weight:bold;">Salva</button>
-                <!-- Menu a 3 puntini -->
                 <button onclick="openContactInfoModal()" style="background:none; border:none; color:white; font-size:22px; cursor:pointer; font-weight:bold; padding: 0 4px;" title="Informazioni Contatto">⠇</button>
             </div>
         </div>
@@ -527,11 +524,39 @@
                 let label = chatObj.isSaved ? `<b style="color: #000; font-weight: bold;">${chatObj.name}</b>` : `<span style="color:#d9534f; font-weight: bold;">Sconosciuto: ${chatObj.phone}</span>`;
                 let unreadBadgeHtml = (chatObj.unreadCount > 0) ? `<span class="chat-badge">${chatObj.unreadCount}</span>` : '';
 
-                // Pulsante Modifica ingrandito e reso molto più chiaro e cliccabile
-                let editBtnHtml = chatObj.isSaved ? `<button onclick="event.stopPropagation(); editContactNameByPhone('${chatObj.phone}')" style="background:#495057; color:white; border:none; border-radius:6px; padding:8px 12px; font-size:13px; cursor:pointer; margin-right:10px; font-weight:bold;">Modifica</button>` : '';
+                // Pulsante Modifica ben visibile e protetto da stopPropagation
+                let editBtnHtml = chatObj.isSaved ? `<button type="button" class="edit-btn" style="background:#495057; color:white; border:none; border-radius:6px; padding:10px 14px; font-size:14px; cursor:pointer; margin-right:10px; font-weight:bold;">Modifica</button>` : '';
 
                 div.innerHTML = `<div>${label} ${unreadBadgeHtml}</div> <div style="display:flex; align-items:center;">${editBtnHtml}<span style="color:#6c757d; font-size:13px; font-weight:bold;">Apri ➡</span></div>`;
+                
+                // Evento click principale per aprire la chat
                 div.onclick = () => openChat(chatObj);
+
+                // Gestione click sul tasto modifica corretto e garantito
+                if(chatObj.isSaved) {
+                    const btnEdit = div.querySelector('.edit-btn');
+                    btnEdit.onclick = (e) => {
+                        e.stopPropagation();
+                        editContactNameByPhone(chatObj.phone);
+                    };
+                }
+
+                // GESTIONE LONG PRESS PER ELIMINARE IL CONTATTO (Tieni premuto per 600ms)
+                let pressTimer;
+                div.onmousedown = div.ontouchstart = (e) => {
+                    // Non attivare se preme direttamente sul bottone modifica
+                    if(e.target.classList.contains('edit-btn')) return;
+                    pressTimer = setTimeout(() => {
+                        if(confirm(`Vuoi eliminare il contatto "${chatObj.name}" (${chatObj.phone})?`)) {
+                            contacts = contacts.filter(c => c.phone !== chatObj.phone);
+                            saveContactsToLocalStorage();
+                            updateContactsDisplay();
+                        }
+                    }, 600);
+                };
+                div.onmouseup = div.ontouchend = div.onmouseleave = () => {
+                    clearTimeout(pressTimer);
+                };
 
                 container.appendChild(div);
             });
@@ -565,7 +590,6 @@
         }
 
         function openChat(contact) {
-            // Se il contatto è nei salvati, recuperiamo email e realName aggiornati
             let saved = contacts.find(c => c.phone === contact.phone);
             if(saved) {
                 contact.email = saved.email || 'N/D';
@@ -725,6 +749,24 @@
                 }
 
                 bubble.appendChild(footer);
+
+                // GESTIONE LONG PRESS PER ELIMINARE UN MESSAGGIO INVIATO (Tieni premuto 600ms)
+                if(isSent) {
+                    let msgTimer;
+                    bubble.onmousedown = bubble.ontouchstart = () => {
+                        msgTimer = setTimeout(() => {
+                            if(confirm("Vuoi eliminare questo messaggio?")) {
+                                messages = messages.filter(m => (m.id !== msg.id && m._id !== msg.id));
+                                renderMessages();
+                                updateContactsDisplay();
+                            }
+                        }, 600);
+                    };
+                    bubble.onmouseup = bubble.ontouchend = bubble.onmouseleave = () => {
+                        clearTimeout(msgTimer);
+                    };
+                }
+
                 box.appendChild(bubble);
             });
             box.scrollTop = box.scrollHeight;
