@@ -185,6 +185,7 @@
                 document.getElementById('profile-info').innerText = `Username: ${currentUser.name} | Tel: ${currentUser.phone} | Email: ${currentUser.email}`;
                 document.getElementById('register-screen').style.display = 'none';
                 socket.emit('login_user', { phone: currentUser.phone, name: currentUser.name, email: currentUser.email });
+                requestAllChatsHistory();
                 updateContactsDisplay();
             }
         };
@@ -196,6 +197,7 @@
             document.getElementById('profile-info').innerText = `Username: ${currentUser.name} | Tel: ${currentUser.phone} | Email: ${currentUser.email}`;
             document.getElementById('register-screen').style.display = 'none';
             socket.emit('login_user', { phone: currentUser.phone, name: currentUser.name, email: currentUser.email });
+            requestAllChatsHistory();
             updateContactsDisplay();
         });
 
@@ -205,7 +207,14 @@
 
         socket.on('login_success', (userData) => {
             console.log("Connesso al server con successo.");
+            requestAllChatsHistory();
         });
+
+        function requestAllChatsHistory() {
+            if(!currentUser) return;
+            // Richiede al server tutti i messaggi salvati su MongoDB per questo utente
+            socket.emit('get_all_chats_history', { userPhone: currentUser.phone, userName: currentUser.name });
+        }
 
         function loadLocalStorageData() {
             if(!currentUser) return;
@@ -221,22 +230,41 @@
         socket.on('receive_message', (msg) => {
             if(!currentUser) return;
             
-            let exists = messages.some(m => (m.id && m.id === (msg.id || msg._id)) || (m._id && m._id === (msg.id || msg._id)));
-            if(!exists) {
-                msg.id = msg.id || msg._id;
+            msg.id = msg.id || msg._id;
+            let existingIndex = messages.findIndex(m => m.id === msg.id || (m.id && m.id.toString() === msg.id.toString()));
+            
+            if(existingIndex !== -1) {
+                messages[existingIndex] = msg; // Aggiorna se già presente (es. cambio stato)
+            } else {
                 messages.push(msg);
-                updateContactsDisplay();
-                
-                if(currentChatContact) {
-                    const pId = currentChatContact.phone;
-                    const pName = currentChatContact.realName;
-                    if(msg.sender === pId || msg.sender === pName || msg.recipient === pId || msg.recipient === pName) {
-                        renderMessages();
-                        if(msg.recipient === currentUser.phone || msg.recipient === currentUser.name) {
-                            socket.emit('update_status', { messageId: msg.id, status: 'read' });
-                        }
+            }
+
+            updateContactsDisplay();
+            
+            if(currentChatContact) {
+                const pId = currentChatContact.phone;
+                const pName = currentChatContact.realName || currentChatContact.name;
+                if(msg.sender === pId || msg.sender === pName || msg.recipient === pId || msg.recipient === pName) {
+                    renderMessages();
+                    if(msg.recipient === currentUser.phone || msg.recipient === currentUser.name) {
+                        socket.emit('update_status', { messageId: msg.id, status: 'read' });
                     }
                 }
+            }
+        });
+
+        socket.on('all_chats_history', (history) => {
+            if(!currentUser) return;
+            history.forEach(dbMsg => {
+                dbMsg.id = dbMsg._id || dbMsg.id;
+                let exists = messages.some(m => m.id === dbMsg.id || (m.id && m.id.toString() === dbMsg.id.toString()));
+                if(!exists) {
+                    messages.push(dbMsg);
+                }
+            });
+            updateContactsDisplay();
+            if(currentChatContact) {
+                renderMessages();
             }
         });
 
@@ -244,7 +272,7 @@
             if(!currentUser) return;
             history.forEach(dbMsg => {
                 dbMsg.id = dbMsg._id || dbMsg.id;
-                let exists = messages.some(m => m.id === dbMsg.id);
+                let exists = messages.some(m => m.id === dbMsg.id || (m.id && m.id.toString() === dbMsg.id.toString()));
                 if(!exists) {
                     messages.push(dbMsg);
                 }
@@ -256,7 +284,7 @@
         });
 
         socket.on('message_status_updated', (data) => {
-            let msg = messages.find(m => m.id === data.messageId);
+            let msg = messages.find(m => m.id === data.messageId || (m.id && m.id.toString() === data.messageId.toString()));
             if(msg) {
                 msg.status = data.status;
                 if(currentChatContact) renderMessages();
@@ -549,7 +577,6 @@
             renderMessages();
             input.value = '';
 
-            // Se il socket si era disconnesso (es. sleep di Render), lo riconnette al volo
             if (!socket.connected) {
                 socket.connect();
             }
@@ -569,8 +596,8 @@
                 const isFromMe = (m.sender === currentUser.phone || m.sender === currentUser.name);
                 const isToMe = (m.recipient === currentUser.phone || m.recipient === currentUser.name);
                 
-                const isToPartner = (m.recipient === pPhone || m.recipient === pRealName);
-                const isFromPartner = (m.sender === pPhone || m.sender === pRealName);
+                const isToPartner = (m.recipient === pPhone || m.recipient === pRealName || (pRealName && m.recipient === pRealName));
+                const isFromPartner = (m.sender === pPhone || m.sender === pRealName || (pRealName && m.sender === pRealName));
 
                 return (isFromMe && isToPartner) || (isFromPartner && isToMe);
             });
@@ -597,16 +624,16 @@
                     ticksSpan.className = 'status-ticks';
                     let st = msg.status || 'sent';
                     if(st === 'local') {
-                        ticksSpan.innerHTML = '—'; // Linea orizzontale: in locale, non ancora partito/confermato
+                        ticksSpan.innerHTML = '—';
                         ticksSpan.className += ' gray';
                     } else if(st === 'sent') {
-                        ticksSpan.innerHTML = '✓'; // Una spunta: arrivato al server
+                        ticksSpan.innerHTML = '✓';
                         ticksSpan.className += ' gray';
                     } else if(st === 'delivered') {
-                        ticksSpan.innerHTML = '✓✓'; // Due spunte grigie: recapitato all'altro
+                        ticksSpan.innerHTML = '✓✓';
                         ticksSpan.className += ' gray';
                     } else if(st === 'read') {
-                        ticksSpan.innerHTML = '✓✓'; // Due spunte blu: letto
+                        ticksSpan.innerHTML = '✓✓';
                         ticksSpan.className += ' blue';
                     }
                     footer.appendChild(ticksSpan);
