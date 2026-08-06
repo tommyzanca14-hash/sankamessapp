@@ -127,10 +127,16 @@ io.on('connection', (socket) => {
 
     socket.on('send_message', async (msgData) => {
         try {
+            console.log("Messaggio ricevuto dal client:", msgData);
+
             let recipientSocketId = activeUsers.get(msgData.recipient);
             if (!recipientSocketId) {
                 const dbUser = await User.findOne({
-                    $or: [{ phone: msgData.recipient }, { name: msgData.recipient }, { email: msgData.recipient }]
+                    $or: [
+                        { phone: msgData.recipient }, 
+                        { name: msgData.recipient }, 
+                        { email: msgData.recipient }
+                    ]
                 });
                 if (dbUser) {
                     recipientSocketId = activeUsers.get(dbUser.phone) || activeUsers.get(dbUser.name);
@@ -160,10 +166,13 @@ io.on('connection', (socket) => {
             if (isOnline) {
                 io.to(recipientSocketId).emit('receive_message', messagePayload);
             }
+            
+            // Conferma immediata al mittente per sbloccare il trattino
             socket.emit('receive_message', messagePayload);
 
         } catch (err) {
             console.error("Errore invio messaggio:", err);
+            socket.emit('message_error', { error: "Errore durante l'invio del messaggio" });
         }
     });
 
@@ -184,7 +193,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- AGGIUNTA FONDAMENTALE PER LA MEMORIA GLOBALE ---
     socket.on('get_all_chats_history', async (data) => {
         try {
             const { userPhone, userName } = data;
@@ -203,7 +211,6 @@ io.on('connection', (socket) => {
             socket.emit('all_chats_history', []);
         }
     });
-    // ---------------------------------------------------
 
     socket.on('update_status', async (data) => {
         try {
