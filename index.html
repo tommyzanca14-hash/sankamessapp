@@ -26,9 +26,16 @@
             background: white; border-top: 1px solid #dee2e6; display: flex; 
             justify-content: space-around; align-items: center; z-index: 1000; 
         }
-        .nav-item { background: none; border: none; font-size: 12px; display: flex; flex-direction: column; align-items: center; cursor: pointer; color: #6c757d; font-weight: bold; }
+        .nav-item { background: none; border: none; font-size: 12px; display: flex; flex-direction: column; align-items: center; cursor: pointer; color: #6c757d; font-weight: bold; position: relative; }
         .nav-item.active { color: #343a40; }
         .nav-item span { font-size: 22px; margin-bottom: 2px; }
+
+        /* Badge di notifica rosso */
+        .nav-badge, .chat-badge {
+            position: absolute; top: -2px; right: 5px; background: #dc3545; color: white; 
+            border-radius: 50%; padding: 2px 6px; font-size: 10px; font-weight: bold; display: none;
+        }
+        .chat-badge { position: static; display: inline-block; margin-left: 8px; }
 
         .chat-header { padding: 15px; background: white; border-bottom: 1px solid #dee2e6; }
         .chat-header input { width: 100%; padding: 10px 15px; border: 1px solid #ced4da; border-radius: 20px; outline: none; background: #f8f9fa; font-weight: normal; }
@@ -64,9 +71,20 @@
 
         .section-header { padding: 15px; background: white; font-size: 18px; font-weight: bold; border-bottom: 1px solid #dee2e6; color: #343a40; }
         .p-15 { padding: 15px; }
+
+        /* Banner di notifica fluttuante in alto */
+        #notification-banner {
+            position: fixed; top: -60px; left: 50%; transform: translateX(-50%);
+            background: #212529; color: white; padding: 12px 20px; border-radius: 8px;
+            z-index: 4000; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            transition: top 0.3s ease; text-align: center; max-width: 90%;
+        }
+        #notification-banner.show { top: 15px; }
     </style>
 </head>
 <body>
+
+    <div id="notification-banner">Notifica</div>
 
     <div id="register-screen">
         <h2>Benvenuto su Omega7</h2>
@@ -150,7 +168,7 @@
     </div>
 
     <nav class="bottom-nav">
-        <button class="nav-item active" onclick="switchTab('chats', this)"><span>💬</span>Chat</button>
+        <button class="nav-item active" onclick="switchTab('chats', this)"><span>💬</span>Chat<span id="badge-chats" class="nav-badge">0</span></button>
         <button class="nav-item" onclick="switchTab('calls', this)"><span>📞</span>Chiamate</button>
         <button class="nav-item" onclick="switchTab('add', this)"><span>➕</span>Aggiungi</button>
         <button class="nav-item" onclick="switchTab('social', this)"><span>🌐</span>Social</button>
@@ -176,6 +194,33 @@
                 { urls: 'stun:stun2.l.google.com:19302' }
             ] 
         };
+
+        // Funzione per generare un suono di notifica acustico sintetizzato (senza file esterni)
+        function playNotificationSound() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // Nota D5
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.3);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.3);
+            } catch(e) { console.log("Audio non supportato o bloccato dal browser", e); }
+        }
+
+        // Funzione per mostrare un banner di notifica visivo in alto
+        function showNotificationBanner(text) {
+            const banner = document.getElementById('notification-banner');
+            banner.innerText = text;
+            banner.classList.add('show');
+            setTimeout(() => {
+                banner.classList.remove('show');
+            }, 3500);
+        }
 
         window.onload = () => {
             const savedUser = localStorage.getItem('omega7_user');
@@ -212,7 +257,6 @@
 
         function requestAllChatsHistory() {
             if(!currentUser) return;
-            // Richiede al server tutti i messaggi salvati su MongoDB per questo utente
             socket.emit('get_all_chats_history', { userPhone: currentUser.phone, userName: currentUser.name });
         }
 
@@ -234,9 +278,16 @@
             let existingIndex = messages.findIndex(m => m.id === msg.id || (m.id && m.id.toString() === msg.id.toString()));
             
             if(existingIndex !== -1) {
-                messages[existingIndex] = msg; // Aggiorna se già presente (es. cambio stato)
+                messages[existingIndex] = msg; 
             } else {
                 messages.push(msg);
+                
+                // GESTIONE NOTIFICHE (Se il messaggio non è inviato da me)
+                const isFromMe = (msg.sender === currentUser.phone || msg.sender === currentUser.name);
+                if (!isFromMe) {
+                    playNotificationSound();
+                    showNotificationBanner(`Nuovo messaggio da: ${msg.sender}`);
+                }
             }
 
             updateContactsDisplay();
@@ -294,6 +345,8 @@
         socket.on('incoming_call', (data) => {
             if(!currentUser) return;
             incomingCallData = data;
+            playNotificationSound();
+            showNotificationBanner(`Chiamata in arrivo da ${data.fromName || data.fromPhone}`);
             document.getElementById('call-partner-label').innerText = `Da: ${data.fromName || data.fromPhone}`;
             document.getElementById('call-status-text').innerText = data.callType === 'video' ? "Videochiamata in arrivo..." : "Chiamata audio in arrivo...";
             document.getElementById('answer-call-btn').style.display = 'block';
@@ -398,7 +451,8 @@
                     name: c.name, 
                     phone: c.phone, 
                     realName: c.realName, 
-                    isSaved: true 
+                    isSaved: true,
+                    unreadCount: 0
                 });
             });
 
@@ -407,21 +461,28 @@
                 let other = isMe ? m.recipient : m.sender;
                 
                 if(other && other !== currentUser.phone && other !== currentUser.name) {
-                    let alreadyExists = false;
+                    let entry = null;
                     for(let [phoneKey, val] of activeMap.entries()) {
                         if(phoneKey === other || val.realName === other) {
-                            alreadyExists = true;
+                            entry = val;
                             break;
                         }
                     }
 
-                    if(!alreadyExists) {
-                        activeMap.set(other, { 
+                    if(!entry) {
+                        entry = { 
                             name: other, 
                             phone: other, 
                             realName: other, 
-                            isSaved: false 
-                        });
+                            isSaved: false,
+                            unreadCount: 0
+                        };
+                        activeMap.set(other, entry);
+                    }
+
+                    // Conta messaggi non letti ricevuti
+                    if(!isMe && m.status !== 'read' && (!currentChatContact || currentChatContact.phone !== entry.phone)) {
+                        entry.unreadCount = (entry.unreadCount || 0) + 1;
                     }
                 }
             });
@@ -438,6 +499,16 @@
 
             document.getElementById('contacts-count').innerText = `Chat attive: ${displayList.length}`;
 
+            // Aggiorna badge generale sulla navbar
+            let totalUnread = displayList.reduce((sum, item) => sum + (item.unreadCount || 0), 0);
+            const badgeChats = document.getElementById('badge-chats');
+            if(totalUnread > 0) {
+                badgeChats.innerText = totalUnread;
+                badgeChats.style.display = 'inline-block';
+            } else {
+                badgeChats.style.display = 'none';
+            }
+
             if(displayList.length === 0) {
                 container.innerHTML = '<div class="chat-item" style="font-weight:normal; color:#6c757d;">Nessuna chat attiva. Aggiungi un contatto dal [+] o attendi un messaggio.</div>';
                 return;
@@ -452,7 +523,10 @@
                 const div = document.createElement('div');
                 div.className = 'chat-item';
                 let label = chatObj.isSaved ? `<b style="color: #000; font-weight: bold;">${chatObj.name}</b>` : `<span style="color:#d9534f; font-weight: bold;">Sconosciuto: ${chatObj.phone}</span>`;
-                div.innerHTML = `<span>${label}</span> <span style="color:#6c757d; font-size:12px; font-weight:bold;">Apri ➡</span>`;
+                
+                let unreadBadgeHtml = (chatObj.unreadCount > 0) ? `<span class="chat-badge">${chatObj.unreadCount}</span>` : '';
+
+                div.innerHTML = `<div>${label} ${unreadBadgeHtml}</div> <span style="color:#6c757d; font-size:12px; font-weight:bold;">Apri ➡</span>`;
                 
                 div.onclick = () => openChat(chatObj);
 
@@ -520,6 +594,7 @@
 
             renderMessages();
             document.getElementById('active-chat-window').style.display = 'flex';
+            updateContactsDisplay(); // Aggiorna i badge dei non letti
         }
 
         function quickSaveContact() {
@@ -551,6 +626,7 @@
         function closeChat() {
             document.getElementById('active-chat-window').style.display = 'none';
             currentChatContact = null;
+            updateContactsDisplay();
         }
 
         function sendMessage() {
