@@ -184,6 +184,27 @@ io.on('connection', (socket) => {
         }
     });
 
+    // --- AGGIUNTA FONDAMENTALE PER LA MEMORIA GLOBALE ---
+    socket.on('get_all_chats_history', async (data) => {
+        try {
+            const { userPhone, userName } = data;
+            const history = await Message.find({
+                $or: [
+                    { sender: userPhone },
+                    { recipient: userPhone },
+                    { sender: userName },
+                    { recipient: userName }
+                ]
+            }).sort({ timestamp: 1 });
+
+            socket.emit('all_chats_history', history);
+        } catch (err) {
+            console.error("Errore cronologia globale:", err);
+            socket.emit('all_chats_history', []);
+        }
+    });
+    // ---------------------------------------------------
+
     socket.on('update_status', async (data) => {
         try {
             await Message.findByIdAndUpdate(data.messageId, { status: data.status });
