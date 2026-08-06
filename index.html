@@ -356,7 +356,6 @@
             updateContactsDisplay();
             if(currentChatContact) {
                 renderMessages();
-                // Segna come letti i messaggi pendenti del partner quando apri la chat
                 chatHistoryMarkRead(history);
             }
         });
@@ -864,11 +863,16 @@
                 }
             };
 
+            // Gestione ottimizzata del flusso remoto con forzatura audio attiva
             peerConnection.ontrack = (event) => {
                 const remoteVideo = document.getElementById('remote-video');
                 if (event.streams && event.streams[0]) {
                     remoteVideo.srcObject = event.streams[0];
-                    remoteVideo.play().catch(e => {});
+                    // Assicura la riproduzione forzata dell'audio associato allo stream video
+                    remoteVideo.muted = false;
+                    remoteVideo.play().catch(e => {
+                        console.log("Autoplay bloccato o riprovato:", e);
+                    });
                 }
                 document.getElementById('call-status-text').innerText = "Chiamata in corso (Connesso)";
             };
