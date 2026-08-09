@@ -71,30 +71,6 @@ const activeUsers = new Map(); // phone -> Set di socket.id
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
 
-    // Funzione unificata di gestione sessione e messaggi pendenti
-    const handleUserSession = async (user, socket) => {
-        if (!activeUsers.has(user.phone)) {
-            activeUsers.set(user.phone, new Set());
-        }
-        activeUsers.get(user.phone).add(socket.id);
-        socket.userPhone = user.phone;
-
-        // Invia messaggi pendenti non letti
-        const pending = await Message.find({ recipient: user.phone, status: 'sent', isGroup: false });
-        for (let msg of pending) {
-            msg.status = 'delivered';
-            await msg.save();
-            socket.emit('receive_message', msg);
-            
-            const senderSockets = activeUsers.get(msg.sender);
-            if (senderSockets && senderSockets.size > 0) {
-                senderSockets.forEach(sId => {
-                    io.to(sId).emit('message_status_update', { messageId: msg._id, status: 'delivered' });
-                });
-            }
-        }
-    };
-
     socket.on('register_user', async (data) => {
         try {
             if (!data || !data.name || !data.phone) {
@@ -116,8 +92,27 @@ io.on('connection', (socket) => {
                 await user.save();
             }
 
-            await handleUserSession(user, socket);
+            if (!activeUsers.has(user.phone)) {
+                activeUsers.set(user.phone, new Set());
+            }
+            activeUsers.get(user.phone).add(socket.id);
+            socket.userPhone = user.phone;
+
             socket.emit('registration_success', user);
+
+            const pending = await Message.find({ recipient: user.phone, status: 'sent', isGroup: false });
+            for (let msg of pending) {
+                msg.status = 'delivered';
+                await msg.save();
+                socket.emit('receive_message', msg);
+                
+                const senderSockets = activeUsers.get(msg.sender);
+                if (senderSockets && senderSockets.size > 0) {
+                    senderSockets.forEach(sId => {
+                        io.to(sId).emit('message_status_update', { messageId: msg._id, status: 'delivered' });
+                    });
+                }
+            }
         } catch (err) {
             console.error("Errore registrazione:", err);
             socket.emit('registration_error', 'Errore del server o numero già registrato.');
@@ -129,11 +124,30 @@ io.on('connection', (socket) => {
             if (!data || !data.phone) return;
             let user = await User.findOne({ phone: data.phone.trim() });
             if (user) {
-                await handleUserSession(user, socket);
+                if (!activeUsers.has(user.phone)) {
+                    activeUsers.set(user.phone, new Set());
+                }
+                activeUsers.get(user.phone).add(socket.id);
+                socket.userPhone = user.phone;
+
                 socket.emit('login_success', user);
 
                 const userGroups = await Group.find({ members: user.phone });
                 userGroups.forEach(g => socket.join(g._id.toString()));
+
+                const pending = await Message.find({ recipient: user.phone, status: 'sent', isGroup: false });
+                for (let msg of pending) {
+                    msg.status = 'delivered';
+                    await msg.save();
+                    socket.emit('receive_message', msg);
+
+                    const senderSockets = activeUsers.get(msg.sender);
+                    if (senderSockets && senderSockets.size > 0) {
+                        senderSockets.forEach(sId => {
+                            io.to(sId).emit('message_status_update', { messageId: msg._id, status: 'delivered' });
+                        });
+                    }
+                }
             } else {
                 socket.emit('registration_error', 'Utente non trovato.');
             }
@@ -225,6 +239,7 @@ io.on('connection', (socket) => {
         }
     });
 
+    // --- INVIO MESSAGGIO OTTIMIZZATO IN PARALLELO ---
     socket.on('send_message', async (msgData, callback) => {
         try {
             const { sender, recipient, text, isGroup, tempId } = msgData;
@@ -247,7 +262,7 @@ io.on('connection', (socket) => {
                 timestamp: timestamp
             };
 
-            // 1. Inoltro immediato via WebSocket
+            // 1. SPEDIZIONE ISTANTANEA VIA WEBSOCKET (Zero attese)
             if (isGroup) {
                 io.to(recipient).emit('receive_message', messagePayload);
             } else if (isOnline) {
@@ -256,12 +271,12 @@ io.on('connection', (socket) => {
                 });
             }
 
-            // 2. Risposta immediata al mittente
+            // 2. RISPOSTA IMMEDIATA AL MITTENTE
             if (typeof callback === 'function') {
                 callback({ success: true, message: messagePayload, tempId });
             }
 
-            // 3. Salvataggio asincrono su MongoDB
+            // 3. SALVATAGGIO SU MONGODB IN BACKGROUND (Non blocca la consegna)
             const newMessage = new Message({
                 _id: messageId,
                 sender,
@@ -271,7 +286,10 @@ io.on('connection', (socket) => {
                 status: initialStatus,
                 timestamp
             });
-            await newMessage.save();
+            
+            newMessage.save().catch(dbErr => {
+                console.error("Errore salvataggio asincrono su MongoDB:", dbErr);
+            });
 
         } catch (err) {
             console.error("Errore invio messaggio:", err);
