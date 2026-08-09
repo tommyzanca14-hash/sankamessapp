@@ -66,7 +66,7 @@ const callLogSchema = new mongoose.Schema({
 });
 const CallLog = mongoose.model('CallLog', callLogSchema);
 
-const activeUsers = new Map(); // phone -> socket.id
+const activeUsers = new Map(); // phone -> Set di socket.id (supporta connessioni multiple o cambio schermata)
 
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
@@ -92,8 +92,13 @@ io.on('connection', (socket) => {
                 await user.save();
             }
 
-            activeUsers.set(user.phone, socket.id);
+            // PUNTO 2: Gestione corretta stato online con multi-socket per lo stesso utente
+            if (!activeUsers.has(user.phone)) {
+                activeUsers.set(user.phone, new Set());
+            }
+            activeUsers.get(user.phone).add(socket.id);
             socket.userPhone = user.phone;
+
             socket.emit('registration_success', user);
 
             const pending = await Message.find({ recipient: user.phone, status: 'sent', isGroup: false });
@@ -102,9 +107,13 @@ io.on('connection', (socket) => {
                 await msg.save();
                 socket.emit('receive_message', msg);
                 
-                const senderSocketId = activeUsers.get(msg.sender);
-                if (senderSocketId && io.sockets.sockets.has(senderSocketId)) {
-                    io.to(senderSocketId).emit('message_status_update', { messageId: msg._id, status: 'delivered' });
+                const senderSockets = activeUsers.get(msg.sender);
+                if (senderSockets) {
+                    senderSockets.forEach(sId => {
+                        if (io.sockets.sockets.has(sId)) {
+                            io.to(sId).emit('message_status_update', { messageId: msg._id, status: 'delivered' });
+                        }
+                    });
                 }
             }
         } catch (err) {
@@ -118,8 +127,12 @@ io.on('connection', (socket) => {
             if (!data || !data.phone) return;
             let user = await User.findOne({ phone: data.phone.trim() });
             if (user) {
-                activeUsers.set(user.phone, socket.id);
+                if (!activeUsers.has(user.phone)) {
+                    activeUsers.set(user.phone, new Set());
+                }
+                activeUsers.get(user.phone).add(socket.id);
                 socket.userPhone = user.phone;
+
                 socket.emit('login_success', user);
 
                 const userGroups = await Group.find({ members: user.phone });
@@ -131,9 +144,13 @@ io.on('connection', (socket) => {
                     await msg.save();
                     socket.emit('receive_message', msg);
 
-                    const senderSocketId = activeUsers.get(msg.sender);
-                    if (senderSocketId && io.sockets.sockets.has(senderSocketId)) {
-                        io.to(senderSocketId).emit('message_status_update', { messageId: msg._id, status: 'delivered' });
+                    const senderSockets = activeUsers.get(msg.sender);
+                    if (senderSockets) {
+                        senderSockets.forEach(sId => {
+                            if (io.sockets.sockets.has(sId)) {
+                                io.to(sId).emit('message_status_update', { messageId: msg._id, status: 'delivered' });
+                            }
+                        });
                     }
                 }
             } else {
@@ -200,10 +217,14 @@ io.on('connection', (socket) => {
             await newGroup.save();
 
             members.forEach(phone => {
-                const sId = activeUsers.get(phone);
-                if (sId && io.sockets.sockets.has(sId)) {
-                    const targetSocket = io.sockets.sockets.get(sId);
-                    if (targetSocket) targetSocket.join(newGroup._id.toString());
+                const sSockets = activeUsers.get(phone);
+                if (sSockets) {
+                    sSockets.forEach(sId => {
+                        if (io.sockets.sockets.has(sId)) {
+                            const targetSocket = io.sockets.sockets.get(sId);
+                            if (targetSocket) targetSocket.join(newGroup._id.toString());
+                        }
+                    });
                 }
             });
 
@@ -252,13 +273,18 @@ io.on('connection', (socket) => {
             if (isGroup) {
                 io.to(recipient).emit('receive_message', messagePayload);
             } else {
-                let recipientSocketId = activeUsers.get(recipient);
-                const isOnline = recipientSocketId && io.sockets.sockets.has(recipientSocketId);
+                let recipientSockets = activeUsers.get(recipient);
+                let isOnline = recipientSockets && Array.from(recipientSockets).some(sId => io.sockets.sockets.has(sId));
+                
                 if (isOnline) {
                     newMessage.status = 'delivered';
                     await newMessage.save();
                     messagePayload.status = 'delivered';
-                    io.to(recipientSocketId).emit('receive_message', messagePayload);
+                    recipientSockets.forEach(sId => {
+                        if (io.sockets.sockets.has(sId)) {
+                            io.to(sId).emit('receive_message', messagePayload);
+                        }
+                    });
                 }
             }
 
@@ -279,9 +305,13 @@ io.on('connection', (socket) => {
             await Message.updateMany({ ...query, status: { $ne: 'read' } }, { $set: { status: 'read' } });
 
             if (!isGroup) {
-                const senderSocketId = activeUsers.get(chatPartnerId);
-                if (senderSocketId && io.sockets.sockets.has(senderSocketId)) {
-                    io.to(senderSocketId).emit('messages_read_receipt', { readerPhone: userPhone });
+                const senderSockets = activeUsers.get(chatPartnerId);
+                if (senderSockets) {
+                    senderSockets.forEach(sId => {
+                        if (io.sockets.sockets.has(sId)) {
+                            io.to(sId).emit('messages_read_receipt', { readerPhone: userPhone });
+                        }
+                    });
                 }
             }
         } catch (err) {
@@ -335,13 +365,14 @@ io.on('connection', (socket) => {
     // --- GESTIONE CHIAMATE WEBRTC & STATO UTENTE OTTIMIZZATA ---
     socket.on('check_user_availability', async (data, callback) => {
         const targetPhone = data.targetPhone;
-        const targetSocketId = activeUsers.get(targetPhone);
-        const isOnline = targetSocketId && io.sockets.sockets.has(targetSocketId);
+        const targetSockets = activeUsers.get(targetPhone);
+        const isOnline = targetSockets && Array.from(targetSockets).some(sId => io.sockets.sockets.has(sId));
         if (typeof callback === 'function') {
             callback({ online: !!isOnline });
         }
     });
 
+    // PUNTO 3 & 4: Avvio chiamata con verifica che almeno 1 utente sia online e risponda
     socket.on('start_call', async (data) => {
         try {
             let participantsList = [{ phone: data.initiatorPhone, name: data.initiatorName }];
@@ -349,25 +380,25 @@ io.on('connection', (socket) => {
 
             if (data.targets && data.targets.length > 0) {
                 for (let targetPhone of data.targets) {
-                    const targetSocketId = activeUsers.get(targetPhone);
-                    const isOnline = targetSocketId && io.sockets.sockets.has(targetSocketId);
+                    const targetSockets = activeUsers.get(targetPhone);
+                    const isOnline = targetSockets && Array.from(targetSockets).some(sId => io.sockets.sockets.has(sId));
                     if (isOnline) {
                         validTargets.push(targetPhone);
                     }
                 }
             }
 
-            if (!data.isGroup && validTargets.length === 0) {
+            if (validTargets.length === 0) {
                 const callLog = new CallLog({
                     callType: data.callType,
-                    isGroup: false,
+                    isGroup: data.isGroup,
                     initiatorPhone: data.initiatorPhone,
                     initiatorName: data.initiatorName,
                     participants: participantsList,
                     status: 'unreachable'
                 });
                 await callLog.save();
-                socket.emit('call_unreachable', { message: 'Utente non raggiungibile o offline.' });
+                socket.emit('call_unreachable', { message: 'Nessun utente raggiungibile o online.' });
                 return;
             }
 
@@ -391,16 +422,20 @@ io.on('connection', (socket) => {
             await callLog.save();
 
             validTargets.forEach(targetPhone => {
-                const targetSocketId = activeUsers.get(targetPhone);
-                if (targetSocketId && io.sockets.sockets.has(targetSocketId)) {
-                    io.to(targetSocketId).emit('incoming_call', {
-                        callId: callLog._id,
-                        initiatorPhone: data.initiatorPhone,
-                        initiatorName: data.initiatorName,
-                        callType: data.callType,
-                        isGroup: data.isGroup,
-                        groupId: data.groupId,
-                        targets: data.targets
+                const targetSockets = activeUsers.get(targetPhone);
+                if (targetSockets) {
+                    targetSockets.forEach(sId => {
+                        if (io.sockets.sockets.has(sId)) {
+                            io.to(sId).emit('incoming_call', {
+                                callId: callLog._id,
+                                initiatorPhone: data.initiatorPhone,
+                                initiatorName: data.initiatorName,
+                                callType: data.callType,
+                                isGroup: data.isGroup,
+                                groupId: data.groupId,
+                                targets: data.targets
+                            });
+                        }
                     });
                 }
             });
@@ -408,6 +443,15 @@ io.on('connection', (socket) => {
             socket.emit('call_initiated', { callId: callLog._id });
         } catch (err) {
             console.error("Errore avvio chiamata:", err);
+        }
+    });
+
+    socket.on('call_accepted', async (data) => {
+        try {
+            await CallLog.findByIdAndUpdate(data.callId, { status: 'completed' });
+            io.emit('call_peer_joined', { callId: data.callId, userPhone: data.userPhone });
+        } catch (err) {
+            console.error("Errore accettazione chiamata:", err);
         }
     });
 
@@ -419,11 +463,15 @@ io.on('connection', (socket) => {
             });
 
             if (data.toIdentifier) {
-                const recipientSocketId = activeUsers.get(data.toIdentifier);
-                if (recipientSocketId && io.sockets.sockets.has(recipientSocketId)) {
-                    io.to(recipientSocketId).emit('call_signal', {
-                        fromPhone: data.userPhone,
-                        signal: data.signal
+                const recipientSockets = activeUsers.get(data.toIdentifier);
+                if (recipientSockets) {
+                    recipientSockets.forEach(sId => {
+                        if (io.sockets.sockets.has(sId)) {
+                            io.to(sId).emit('call_signal', {
+                                fromPhone: data.userPhone,
+                                signal: data.signal
+                            });
+                        }
                     });
                 }
             }
@@ -433,11 +481,15 @@ io.on('connection', (socket) => {
     });
 
     socket.on('call_signal', (data) => {
-        const recipientSocketId = activeUsers.get(data.toIdentifier);
-        if (recipientSocketId && io.sockets.sockets.has(recipientSocketId)) {
-            io.to(recipientSocketId).emit('call_signal', {
-                fromPhone: data.fromPhone,
-                signal: data.signal
+        const recipientSockets = activeUsers.get(data.toIdentifier);
+        if (recipientSockets) {
+            recipientSockets.forEach(sId => {
+                if (io.sockets.sockets.has(sId)) {
+                    io.to(sId).emit('call_signal', {
+                        fromPhone: data.fromPhone,
+                        signal: data.signal
+                    });
+                }
             });
         }
     });
@@ -447,10 +499,20 @@ io.on('connection', (socket) => {
             await CallLog.findByIdAndUpdate(data.callId, { status: 'declined' });
         }
         if (data && data.toIdentifier) {
-            const recipientSocketId = activeUsers.get(data.toIdentifier);
-            if (recipientSocketId && io.sockets.sockets.has(recipientSocketId)) {
-                io.to(recipientSocketId).emit('call_declined', { fromPhone: data.fromPhone, userName: data.userName });
+            const recipientSockets = activeUsers.get(data.toIdentifier);
+            if (recipientSockets) {
+                recipientSockets.forEach(sId => {
+                    if (io.sockets.sockets.has(sId)) {
+                        io.to(sId).emit('call_declined', { fromPhone: data.fromPhone, userName: data.userName });
+                    }
+                });
             }
+        }
+    });
+
+    socket.on('leave_call', (data) => {
+        if (data && data.callId && data.userPhone) {
+            io.emit('call_participant_left', { callId: data.callId, userPhone: data.userPhone });
         }
     });
 
@@ -460,10 +522,15 @@ io.on('connection', (socket) => {
         }
         if (data && data.targets) {
             data.targets.forEach(phone => {
-                const sId = activeUsers.get(phone);
-                if (sId && io.sockets.sockets.has(sId)) io.to(sId).emit('call_ended');
+                const sSockets = activeUsers.get(phone);
+                if (sSockets) {
+                    sSockets.forEach(sId => {
+                        if (io.sockets.sockets.has(sId)) io.to(sId).emit('call_ended');
+                    });
+                }
             });
         }
+        io.emit('call_ended');
     });
 
     socket.on('get_call_logs', async (data) => {
@@ -482,13 +549,16 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', async () => {
         if (socket.userPhone) {
-            const currentSocket = activeUsers.get(socket.userPhone);
-            if (currentSocket === socket.id) {
-                activeUsers.delete(socket.userPhone);
-                await CallLog.updateMany(
-                    { status: 'pending', $or: [{ initiatorPhone: socket.userPhone }, { "participants.phone": socket.userPhone }] },
-                    { $set: { status: 'missed' } }
-                );
+            const userSockets = activeUsers.get(socket.userPhone);
+            if (userSockets) {
+                userSockets.delete(socket.id);
+                if (userSockets.size === 0) {
+                    activeUsers.delete(socket.userPhone);
+                    await CallLog.updateMany(
+                        { status: 'pending', $or: [{ initiatorPhone: socket.userPhone }, { "participants.phone": socket.userPhone }] },
+                        { $set: { status: 'missed' } }
+                    );
+                }
             }
         }
         console.log('Utente disconnesso:', socket.id);
