@@ -332,13 +332,13 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- GESTIONE CHIAMATE WEBRTC & STATO UTENTE ---
+    // --- GESTIONE CHIAMATE WEBRTC & STATO UTENTE OTTIMIZZATA ---
     socket.on('check_user_availability', async (data, callback) => {
         const targetPhone = data.targetPhone;
         const targetSocketId = activeUsers.get(targetPhone);
         const isOnline = targetSocketId && io.sockets.sockets.has(targetSocketId);
         if (typeof callback === 'function') {
-            callback({ online: isOnline });
+            callback({ online: !!isOnline });
         }
     });
 
@@ -357,7 +357,7 @@ io.on('connection', (socket) => {
                 }
             }
 
-            if (!data.isGroup && validTargets.length === 0 && data.targets && data.targets.length > 0) {
+            if (!data.isGroup && validTargets.length === 0) {
                 const callLog = new CallLog({
                     callType: data.callType,
                     isGroup: false,
@@ -451,18 +451,6 @@ io.on('connection', (socket) => {
             if (recipientSocketId && io.sockets.sockets.has(recipientSocketId)) {
                 io.to(recipientSocketId).emit('call_declined', { fromPhone: data.fromPhone, userName: data.userName });
             }
-        }
-    });
-
-    socket.on('hang_up_call', async (data) => {
-        if (data && data.callId) {
-            await CallLog.findByIdAndUpdate(data.callId, { status: 'completed' });
-        }
-        if (data && data.targets) {
-            data.targets.forEach(phone => {
-                const sId = activeUsers.get(phone);
-                if (sId && io.sockets.sockets.has(sId)) io.to(sId).emit('call_ended');
-            });
         }
     });
 
