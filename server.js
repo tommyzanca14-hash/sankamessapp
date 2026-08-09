@@ -1,5 +1,5 @@
-const express = require('express');
-const http = require('http'); // Corretto l'errore di sintassi che bloccava il deploy
+Const express = require('express');
+const http = require('http'); 
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -166,7 +166,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Endpoint per recuperare i dettagli completi di un utente (incluso l'email per risolvere il punto 4)
     socket.on('get_user_details', async (data, callback) => {
         try {
             const user = await User.findOne({ phone: data.phone });
@@ -353,7 +352,7 @@ io.on('connection', (socket) => {
                 initiatorPhone: data.initiatorPhone,
                 initiatorName: data.initiatorName,
                 participants: participantsList,
-                status: 'pending' // Corretto: parte come pending finché non viene stabilita
+                status: 'pending'
             });
             await callLog.save();
 
@@ -383,7 +382,7 @@ io.on('connection', (socket) => {
     socket.on('join_call', async (data) => {
         try {
             await CallLog.findByIdAndUpdate(data.callId, {
-                status: 'completed', // Aggiornato a completed solo quando la chiamata viene effettivamente accettata/stabilita
+                status: 'completed',
                 $addToSet: { participants: { phone: data.userPhone, name: data.userName } }
             });
 
