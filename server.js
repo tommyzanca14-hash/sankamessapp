@@ -1,5 +1,5 @@
 const express = require('express');
-const http = require('http'); 
+const http = http = require('http'); 
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -42,7 +42,7 @@ const messageSchema = new mongoose.Schema({
     recipient: String,
     isGroup: { type: Boolean, default: false },
     text: String,
-    status: { type: String, default: 'sent' }, // sent, delivered, read
+    status: { type: String, default: 'sent' },
     timestamp: { type: Date, default: Date.now }
 });
 const Message = mongoose.model('Message', messageSchema);
@@ -61,7 +61,7 @@ const callLogSchema = new mongoose.Schema({
     initiatorPhone: String,
     initiatorName: String,
     participants: [{ phone: String, name: String }],
-    status: { type: String, default: 'pending' }, // pending, completed, declined, missed, unreachable
+    status: { type: String, default: 'pending' },
     timestamp: { type: Date, default: Date.now }
 });
 const CallLog = mongoose.model('CallLog', callLogSchema);
@@ -357,7 +357,6 @@ io.on('connection', (socket) => {
                 }
             }
 
-            // Se nessun target è online, segna subito la chiamata come non raggiungibile/missed
             if (!data.isGroup && validTargets.length === 0 && data.targets && data.targets.length > 0) {
                 const callLog = new CallLog({
                     callType: data.callType,
@@ -436,7 +435,7 @@ io.on('connection', (socket) => {
     socket.on('call_signal', (data) => {
         const recipientSocketId = activeUsers.get(data.toIdentifier);
         if (recipientSocketId && io.sockets.sockets.has(recipientSocketId)) {
-                    io.to(recipientSocketId).emit('call_signal', {
+            io.to(recipientSocketId).emit('call_signal', {
                 fromPhone: data.fromPhone,
                 signal: data.signal
             });
@@ -493,11 +492,16 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
         if (socket.userPhone) {
             const currentSocket = activeUsers.get(socket.userPhone);
             if (currentSocket === socket.id) {
                 activeUsers.delete(socket.userPhone);
+                // Aggiorna eventuali chiamate pendenti aperte a missed/unreachable se l'utente si scollega improvvisamente
+                await CallLog.updateMany(
+                    { status: 'pending', $or: [{ initiatorPhone: socket.userPhone }, { "participants.phone": socket.userPhone }] },
+                    { $set: { status: 'missed' } }
+                );
             }
         }
         console.log('Utente disconnesso:', socket.id);
