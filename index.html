@@ -52,9 +52,6 @@
         .message-bubble.received { background: white; align-self: flex-start; color: #212529; }
         .message-sender-name { font-size: 12px; font-weight: bold; color: #007bff; margin-bottom: 2px; }
         .message-footer { display: flex; justify-content: flex-end; align-items: center; gap: 4px; font-size: 11px; }
-        .status-ticks { font-weight: bold; font-size: 13px; }
-        .status-ticks.blue { color: #007bff; }
-        .status-ticks.gray { color: #6c757d; }
         
         .active-chat-input { background: #f8f9fa; display: flex; padding: 10px; gap: 10px; flex-shrink: 0; border-top: 1px solid #dee2e6; align-items: center; }
         .active-chat-input input { flex: 1; padding: 10px 15px; border: 1px solid #ced4da; border-radius: 20px; outline: none; font-size: 16px; background: white; font-weight: normal; }
@@ -77,12 +74,7 @@
         .call-log-list { flex: 1; overflow-y: auto; background: white; }
         .call-log-item { padding: 14px 15px; border-bottom: 1px solid #f1f3f5; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
         .call-log-item:hover { background: #f8f9fa; }
-        .call-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; }
-        .dot-gray { background: #adb5bd; }
-        .dot-red { background: #dc3545; }
-        .dot-orange { background: #fd7e14; }
-        .dot-yellow { background: #ffc107; }
-        .dot-green { background: #28a745; }
+        .call-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; background: #28a745; }
 
         #notification-banner {
             position: fixed; top: -60px; left: 50%; transform: translateX(-50%);
@@ -238,7 +230,7 @@
         <div class="call-log-list" id="call-log-container"></div>
     </div>
 
-    <!-- Sezione 3: Aggiungi Contatto / Gruppo (Icona 3 con il +) -->
+    <!-- Sezione 3: Aggiungi Contatto / Gruppo -->
     <div id="section-add" class="content-section">
         <div class="section-header">Gestione Contatti & Gruppi</div>
         <div class="p-15" style="display:flex; flex-direction:column; gap:20px;">
@@ -288,10 +280,10 @@
         let groups = [];
         let messages = [];
         let callLogs = [];
-        let currentChatContact = null; // Può essere un utente o un gruppo
+        let currentChatContact = null;
         let isAlphabetical = false;
 
-        let peerConnections = {}; // socketId/phone -> RTCPeerConnection
+        let peerConnections = {}; 
         let localStream = null;
         let activeCallId = null;
         let activeCallType = 'audio';
@@ -299,6 +291,7 @@
         let callTimerInterval = null;
         let callSecondsElapsed = 0;
         let incomingCallPayload = null;
+        let activeCallTargets = [];
 
         const rtcConfig = { 
             iceServers: [
@@ -363,7 +356,8 @@
         });
 
         socket.on('registration_error', (err) => alert(err));
-        socket.on('login_success', () => {
+        socket.on('login_success', (userData) => {
+            currentUser = userData;
             requestAllChatsHistory();
             socket.emit('get_user_groups', { userPhone: currentUser.phone });
         });
@@ -453,12 +447,13 @@
             if(currentChatContact) renderMessages();
         });
 
-        socket.on('incoming_call', (data) => {
+        socket.on('incoming_call', async (data) => {
             if(!currentUser) return;
             incomingCallPayload = data;
             activeCallId = data.callId;
             activeCallType = data.callType;
             activeCallIsGroup = data.isGroup;
+            activeCallTargets = data.targets || [];
 
             playNotificationSound();
             showNotificationBanner(`Chiamata in arrivo da ${data.initiatorName}`);
@@ -468,8 +463,11 @@
             document.getElementById('call-window').style.display = 'flex';
         });
 
+        socket.on('call_initiated', (data) => {
+            if (data && data.callId) activeCallId = data.callId;
+        });
+
         socket.on('call_signal', async (data) => {
-            // data: { fromPhone, signal }
             let pc = peerConnections[data.fromPhone];
             if(!pc) {
                 pc = createPeerConnectionForUser(data.fromPhone);
@@ -479,7 +477,13 @@
                     await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
                     const answer = await pc.createAnswer();
                     await pc.setLocalDescription(answer);
-                    socket.emit('call_signal', { toIdentifier: data.fromPhone, signal: answer });
+                    socket.emit('join_call', {
+                        callId: activeCallId,
+                        userPhone: currentUser.phone,
+                        userName: currentUser.name,
+                        toIdentifier: data.fromPhone,
+                        signal: answer
+                    });
                 } else if(data.signal.type === 'answer') {
                     await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
                 } else if(data.signal.candidate) {
@@ -562,16 +566,13 @@
             });
         }
 
-        // Funzione per risolvere il nome di un utente (gestione tilde ~ per non memorizzati)
-        function getDisplayName(phone, groupContextMembers = null) {
+        function getDisplayName(phone) {
             if(!currentUser) return phone;
             if(phone === currentUser.phone) return "Tu";
 
             let saved = contacts.find(c => c.phone === phone);
             if(saved) return saved.name;
 
-            // Se siamo in un gruppo o in generale, se non è salvato cerchiamo il suo realName se disponibile o restituiamo ~username
-            // Nei gruppi, se è un utente noto tramite server/messaggi passati, cerchiamo di recuperare il nome reale o mostriamo ~phone
             return "~" + phone;
         }
 
@@ -632,7 +633,6 @@
             const container = document.getElementById('new-call-targets-checkboxes');
             container.innerHTML = '';
 
-            // Aggiungi gruppi
             if(groups.length > 0) {
                 let groupHeader = document.createElement('b');
                 groupHeader.innerText = "Gruppi:";
@@ -648,7 +648,6 @@
                 });
             }
 
-            // Aggiungi contatti rubrica
             if(contacts.length > 0) {
                 let contactHeader = document.createElement('b');
                 contactHeader.innerText = "Contatti:";
@@ -705,7 +704,6 @@
 
             let activeMap = new Map();
 
-            // Aggiungi gruppi
             groups.forEach(g => {
                 activeMap.set(g._id, {
                     isGroup: true,
@@ -717,7 +715,6 @@
                 });
             });
 
-            // Aggiungi contatti salvati
             contacts.forEach(c => {
                 activeMap.set(c.phone, { 
                     isGroup: false,
@@ -730,12 +727,9 @@
                 });
             });
 
-            // Analizza messaggi per chat attive con sconosciuti
             messages.forEach(m => {
                 let isMe = (m.sender === currentUser.phone);
-                if(m.isGroup) {
-                    // Gestito tramite i gruppi
-                } else {
+                if(!m.isGroup) {
                     let other = isMe ? m.recipient : m.sender;
                     if(other && other !== currentUser.phone) {
                         let entry = activeMap.get(other);
@@ -951,8 +945,6 @@
             box.scrollTop = box.scrollHeight;
         }
 
-        // --- GESTIONE CHIAMATE E MULTI-UTENTE ---
-
         function startDirectCall(callType) {
             if(!currentChatContact) return;
             let targets = [];
@@ -970,6 +962,7 @@
         async function startCallProcess(targets, callType, isGroup, groupId) {
             activeCallType = callType;
             activeCallIsGroup = isGroup;
+            activeCallTargets = targets;
 
             document.getElementById('call-partner-label').innerText = isGroup ? "Chiamata di Gruppo" : `A: ${getDisplayName(targets[0])}`;
             document.getElementById('call-status-text').innerText = "Connessione in corso...";
@@ -989,9 +982,20 @@
                     callType: callType,
                     isGroup: isGroup,
                     groupId: groupId
-                }, (res) => {
-                    if(res && res.callId) activeCallId = res.callId;
                 });
+
+                if(!isGroup && targets.length > 0) {
+                    let pc = createPeerConnectionForUser(targets[0]);
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    socket.emit('join_call', {
+                        callId: activeCallId,
+                        userPhone: currentUser.phone,
+                        userName: currentUser.name,
+                        toIdentifier: targets[0],
+                        signal: offer
+                    });
+                }
 
                 startCallTimer();
             } catch(e) {
@@ -1011,10 +1015,9 @@
                 });
                 document.getElementById('local-video').srcObject = localStream;
 
-                // Connettiti all'iniziatore o ai partecipanti
                 if(incomingCallPayload) {
-                    let pc = createPeerConnectionForUser(incomingCallPayload.initiatorPhone);
-                    const offer = incomingCallPayload.signal; // se presente o gestito via peer
+                    let callerPhone = incomingCallPayload.initiatorPhone;
+                    let pc = createPeerConnectionForUser(callerPhone);
                 }
 
                 startCallTimer();
@@ -1035,7 +1038,13 @@
 
             pc.onicecandidate = (event) => {
                 if(event.candidate) {
-                    socket.emit('call_signal', { toIdentifier: remotePhone, signal: event.candidate });
+                    socket.emit('join_call', {
+                        callId: activeCallId,
+                        userPhone: currentUser.phone,
+                        userName: currentUser.name,
+                        toIdentifier: remotePhone,
+                        signal: event.candidate
+                    });
                 }
             };
 
@@ -1076,7 +1085,7 @@
         }
 
         function endCall() {
-            socket.emit('hang_up_call', { callId: activeCallId });
+            socket.emit('hang_up_call', { callId: activeCallId, targets: activeCallTargets });
             closeCallWindow();
         }
 
@@ -1096,6 +1105,7 @@
             document.getElementById('call-timer-display').style.display = 'none';
             activeCallId = null;
             incomingCallPayload = null;
+            activeCallTargets = [];
             callSecondsElapsed = 0;
             loadCallLogsFromServer();
         }
@@ -1128,7 +1138,7 @@
                 div.className = 'call-log-item';
                 div.innerHTML = `
                     <div style="display:flex; align-items:center; gap:10px;">
-                        <span class="call-dot dot-green"></span>
+                        <span class="call-dot"></span>
                         <div>
                             <b style="color: #212529; font-size: 15px;">${titleLabel}</b>
                             <div style="font-size: 12px; color: #6c757d; font-weight: normal;">${callTypeLabel} - Svolta</div>
@@ -1141,7 +1151,6 @@
                 `;
 
                 div.onclick = () => {
-                    // Apri modale dettagli partecipanti se cliccato
                     const pList = document.getElementById('call-participants-list');
                     pList.innerHTML = '';
                     log.participants.forEach(p => {
