@@ -1,5 +1,5 @@
 const express = require('express');
-const http = http = require('http'); // Riferimento standard http
+const http = require('http'); // Corretto l'errore di sintassi che bloccava il deploy
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
