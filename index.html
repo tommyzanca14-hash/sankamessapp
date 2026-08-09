@@ -326,13 +326,15 @@
 
         function showNotificationBanner(text) {
             const banner = document.getElementById('notification-banner');
+            if(!banner) return;
             banner.innerText = text;
             banner.classList.add('show');
             setTimeout(() => banner.classList.remove('show'), 3500);
         }
 
         function closeModal(modalId) {
-            document.getElementById(modalId).style.display = 'none';
+            const modal = document.getElementById(modalId);
+            if(modal) modal.style.display = 'none';
         }
 
         window.onload = () => {
@@ -349,14 +351,6 @@
                 loadCallLogsFromServer();
             }
         };
-
-        // Gestione cambio stato visibilità scheda (se l'utente lascia la scheda aperta ma passa ad un'altra app/scheda)
-        document.addEventListener("visibilitychange", () => {
-            if (document.visibilityState === 'hidden' && activeCallId) {
-                // Se c'è una chiamata attiva e l'utente nasconde la scheda, chiudiamo la chiamata per evitare blocchi
-                endCall();
-            }
-        });
 
         socket.on('registration_success', (userData) => {
             currentUser = userData;
@@ -430,7 +424,7 @@
                     showNotificationBanner(`Nuovo messaggio ricevuto`);
                     
                     let existingContact = contacts.find(c => c.phone === msg.sender);
-                    if(!existingContact) {
+                    if(!existingContact && !msg.isGroup) {
                         socket.emit('get_user_details', { phone: msg.sender }, (res) => {
                             if(res.success && res.user) {
                                 contacts.push({
@@ -528,7 +522,7 @@
             activeCallId = data.callId;
             activeCallType = data.callType;
             activeCallIsGroup = data.isGroup;
-            activeCallTargets = data.targets || [data.initiatorPhone];
+            activeCallTargets = data.targets || [];
 
             playNotificationSound();
             showNotificationBanner(`Chiamata in arrivo da ${data.initiatorName}`);
@@ -787,7 +781,7 @@
 
         function updateContactsDisplay(filterText = '') {
             const container = document.getElementById('chat-list-container');
-            if(!currentUser) return;
+            if(!currentUser || !container) return;
 
             let activeMap = new Map();
 
@@ -843,7 +837,8 @@
                 );
             }
 
-            document.getElementById('contacts-count').innerText = `Chat attive: ${displayList.length}`;
+            const countElem = document.getElementById('contacts-count');
+            if(countElem) countElem.innerText = `Chat attive: ${displayList.length}`;
 
             if(displayList.length === 0) {
                 container.innerHTML = '<div class="chat-item" style="font-weight:normal; color:#6c757d;">Nessuna chat attiva.</div>';
@@ -876,7 +871,8 @@
 
         function toggleSort() {
             isAlphabetical = !isAlphabetical;
-            document.getElementById('sort-btn').innerText = isAlphabetical ? "Ordine Cronologico" : "Ordine Alfabetico";
+            const sortBtn = document.getElementById('sort-btn');
+            if(sortBtn) sortBtn.innerText = isAlphabetical ? "Ordine Cronologico" : "Ordine Alfabetico";
             updateContactsDisplay();
         }
 
@@ -888,14 +884,14 @@
             const infoBtn = document.getElementById('info-contact-btn');
 
             if(chatObj.isGroup) {
-                saveBtn.style.display = 'none';
-                infoBtn.style.display = 'none';
+                if(saveBtn) saveBtn.style.display = 'none';
+                if(infoBtn) infoBtn.style.display = 'none';
             } else {
-                infoBtn.style.display = 'block';
+                if(infoBtn) infoBtn.style.display = 'block';
                 if(!chatObj.isSaved) {
-                    saveBtn.style.display = 'block';
+                    if(saveBtn) saveBtn.style.display = 'block';
                 } else {
-                    saveBtn.style.display = 'none';
+                    if(saveBtn) saveBtn.style.display = 'none';
                 }
             }
 
@@ -963,7 +959,8 @@
             currentChatContact.name = customName;
             currentChatContact.isSaved = true;
             document.getElementById('chat-partner-name').innerText = customName;
-            document.getElementById('quick-save-btn').style.display = 'none';
+            const saveBtn = document.getElementById('quick-save-btn');
+            if(saveBtn) saveBtn.style.display = 'none';
             updateContactsDisplay();
             alert("Contatto salvato con successo!");
         }
@@ -1028,8 +1025,8 @@
 
         function renderMessages() {
             const box = document.getElementById('messages-box');
+            if(!box || !currentChatContact || !currentUser) return;
             box.innerHTML = '';
-            if(!currentChatContact || !currentUser) return;
 
             const targetId = currentChatContact.isGroup ? currentChatContact._id : currentChatContact.phone;
 
@@ -1209,7 +1206,7 @@
             }
 
             pc.onicecandidate = (event) => {
-                if(event.candidate) {
+                if(event.candidate && activeCallId) {
                     socket.emit('join_call', {
                         callId: activeCallId,
                         userPhone: currentUser.phone,
@@ -1222,6 +1219,7 @@
 
             pc.ontrack = (event) => {
                 let container = document.getElementById('call-videos-container');
+                if(!container) return;
                 let videoId = 'remote_video_' + remotePhone;
                 let vElem = document.getElementById(videoId);
                 if(!vElem) {
@@ -1243,6 +1241,7 @@
 
         function startCallTimer() {
             const timerDisplay = document.getElementById('call-timer-display');
+            if(!timerDisplay) return;
             timerDisplay.style.display = 'block';
             callSecondsElapsed = 0;
             timerDisplay.innerText = "00:00";
@@ -1273,8 +1272,11 @@
 
             document.querySelectorAll('.remote-video-container').forEach(el => el.remove());
             document.getElementById('call-window').style.display = 'none';
-            document.getElementById('local-video').srcObject = null;
-            document.getElementById('call-timer-display').style.display = 'none';
+            const localVid = document.getElementById('local-video');
+            if(localVid) localVid.srcObject = null;
+            const timerDisp = document.getElementById('call-timer-display');
+            if(timerDisp) timerDisp.style.display = 'none';
+            
             activeCallId = null;
             incomingCallPayload = null;
             activeCallTargets = [];
@@ -1284,7 +1286,7 @@
 
         function updateCallLogDisplay() {
             const container = document.getElementById('call-log-container');
-            if(!currentUser) return;
+            if(!currentUser || !container) return;
 
             if(callLogs.length === 0) {
                 container.innerHTML = '<div class="p-15" style="font-weight:normal; color:#6c757d;">Nessuna chiamata registrata.</div>';
@@ -1329,13 +1331,16 @@
 
                 div.onclick = () => {
                     const pList = document.getElementById('call-participants-list');
-                    pList.innerHTML = '';
-                    log.participants.forEach(p => {
-                        let row = document.createElement('div');
-                        row.innerText = `• ${getDisplayName(p.phone)} (${p.phone})`;
-                        pList.appendChild(row);
-                    });
-                    document.getElementById('call-details-modal').style.display = 'flex';
+                    if(pList) {
+                        pList.innerHTML = '';
+                        log.participants.forEach(p => {
+                            let row = document.createElement('div');
+                            row.innerText = `• ${getDisplayName(p.phone)} (${p.phone})`;
+                            pList.appendChild(row);
+                        });
+                    }
+                    const detailsModal = document.getElementById('call-details-modal');
+                    if(detailsModal) detailsModal.style.display = 'flex';
                 };
 
                 container.appendChild(div);
