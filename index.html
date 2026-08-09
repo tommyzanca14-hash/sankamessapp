@@ -120,6 +120,15 @@
         </div>
     </div>
 
+    <!-- Modale Info Gruppo (Punto 5) -->
+    <div id="group-info-modal" class="modal-overlay">
+        <div class="modal-content">
+            <h3 id="group-modal-title">Membri del Gruppo</h3>
+            <div id="group-members-list-container" style="display:flex; flex-direction:column; gap:8px; max-height:250px; overflow-y:auto;"></div>
+            <button onclick="closeModal('group-info-modal')" style="margin-top: 10px; padding: 10px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">Chiudi</button>
+        </div>
+    </div>
+
     <!-- Modale Dettagli Partecipanti Chiamata -->
     <div id="call-details-modal" class="modal-overlay">
         <div class="modal-content">
@@ -206,7 +215,8 @@
                 <button onclick="startDirectCall('audio')" style="background:none; border:none; color:white; font-size:20px; cursor:pointer;" title="Chiamata Audio">📞</button>
                 <button onclick="startDirectCall('video')" style="background:none; border:none; color:white; font-size:20px; cursor:pointer;" title="Videochiamata">📹</button>
                 <button onclick="quickSaveContact()" id="quick-save-btn" style="background:#495057; color:white; border:none; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; display:none; font-weight:bold;">Salva</button>
-                <button onclick="openContactInfoModal()" id="info-contact-btn" style="background:none; border:none; color:white; font-size:22px; cursor:pointer; font-weight:bold; padding: 0 4px;" title="Informazioni Contatto">⠇</button>
+                <button onclick="openContactInfoModal()" id="info-contact-btn" style="background:none; border:none; color:white; font-size:22px; cursor:pointer; font-weight:bold; padding: 0 4px; display:none;" title="Informazioni Contatto">⠇</button>
+                <button onclick="openGroupInfoModal()" id="info-group-btn" style="background:none; border:none; color:white; font-size:22px; cursor:pointer; font-weight:bold; padding: 0 4px; display:none;" title="Informazioni Gruppo">⠇</button>
             </div>
         </div>
         <div class="active-chat-messages" id="messages-box"></div>
@@ -300,6 +310,7 @@
         let callSecondsElapsed = 0;
         let incomingCallPayload = null;
         let activeCallTargets = [];
+        let callParticipantsCount = 0; // Traccia quanti utenti sono attivi nella chiamata
 
         const rtcConfig = { 
             iceServers: [
@@ -440,12 +451,10 @@
                         });
                     }
 
+                    // PUNTO 1: Invio immediato della spunta blu se siamo dentro la chat attiva con l'utente
                     if(currentChatContact && !currentChatContact.isGroup && currentChatContact.phone === msg.sender) {
                         if(readTimer) clearTimeout(readTimer);
-                        readTimer = setTimeout(() => {
-                            msg.status = 'read';
-                            socket.emit('mark_messages_read', { userPhone: currentUser.phone, chatPartnerId: msg.sender, isGroup: false });
-                        }, 1000);
+                        socket.emit('mark_messages_read', { userPhone: currentUser.phone, chatPartnerId: msg.sender, isGroup: false });
                     }
                 }
             }
@@ -523,6 +532,7 @@
             activeCallType = data.callType;
             activeCallIsGroup = data.isGroup;
             activeCallTargets = data.targets || [];
+            callParticipantsCount = 2; // Partiamo con almeno mittente e destinatario
 
             playNotificationSound();
             showNotificationBanner(`Chiamata in arrivo da ${data.initiatorName}`);
@@ -540,7 +550,7 @@
         });
 
         socket.on('call_unreachable', (data) => {
-            showNotificationBanner(data.message || "Utente non raggiungibile.");
+            showNotificationBanner(data.message || "Nessun utente disponibile ad accettare la chiamata.");
             closeCallWindow();
         });
 
@@ -570,6 +580,7 @@
         });
 
         socket.on('call_ended', () => {
+            showNotificationBanner("La chiamata si è conclusa.");
             closeCallWindow();
         });
 
@@ -713,6 +724,53 @@
                     alert(res.message || "Errore nella creazione del gruppo.");
                 }
             });
+        }
+
+        // PUNTO 5: Schermata informazioni gruppo e apertura chat cliccando sul nome di un membro
+        function openGroupInfoModal() {
+            if(!currentChatContact || !currentChatContact.isGroup) return;
+            
+            document.getElementById('group-modal-title').innerText = `Membri di: ${currentChatContact.name}`;
+            const container = document.getElementById('group-members-list-container');
+            container.innerHTML = '';
+
+            let membersList = currentChatContact.members || [];
+            if(membersList.length === 0) {
+                container.innerHTML = '<span style="font-size:13px; color:#6c757d;">Nessun membro trovato.</span>';
+            } else {
+                membersList.forEach(phone => {
+                    let details = getContactDetails(phone);
+                    let row = document.createElement('div');
+                    row.style.padding = '8px 10px';
+                    row.style.background = '#f8f9fa';
+                    row.style.borderRadius = '6px';
+                    row.style.cursor = 'pointer';
+                    row.style.display = 'flex';
+                    row.style.justify0content = 'space-between';
+                    row.style.alignItems = 'center';
+                    row.innerHTML = `<span style="font-weight:bold; color:#007bff;">${details.name}</span> <span style="font-size:12px; color:#6c757d;">${phone}</span>`;
+                    
+                    row.onmouseover = () => row.style.background = '#e2e8f0';
+                    row.onmouseout = () => row.style.background = '#f8f9fa';
+                    
+                    row.onclick = () => {
+                        closeModal('group-info-modal');
+                        closeChat();
+                        // Apri la chat singola con questo utente
+                        let chatTarget = {
+                            isGroup: false,
+                            name: details.name,
+                            phone: phone,
+                            email: details.email || 'N/D',
+                            realName: details.realName || phone,
+                            isSaved: !!details.isSaved
+                        };
+                        openChat(chatTarget);
+                    };
+                    container.appendChild(row);
+                });
+            }
+            document.getElementById('group-info-modal').style.display = 'flex';
         }
 
         function openNewCallModal() {
@@ -886,13 +944,16 @@
             document.getElementById('chat-partner-name').innerText = chatObj.name;
             
             const saveBtn = document.getElementById('quick-save-btn');
-            const infoBtn = document.getElementById('info-contact-btn');
+            const infoContactBtn = document.getElementById('info-contact-btn');
+            const infoGroupBtn = document.getElementById('info-group-btn');
 
             if(chatObj.isGroup) {
                 if(saveBtn) saveBtn.style.display = 'none';
-                if(infoBtn) infoBtn.style.display = 'none';
+                if(infoContactBtn) infoContactBtn.style.display = 'none';
+                if(infoGroupBtn) infoGroupBtn.style.display = 'block';
             } else {
-                if(infoBtn) infoBtn.style.display = 'block';
+                if(infoGroupBtn) infoGroupBtn.style.display = 'none';
+                if(infoContactBtn) infoContactBtn.style.display = 'block';
                 if(!chatObj.isSaved) {
                     if(saveBtn) saveBtn.style.display = 'block';
                 } else {
@@ -908,9 +969,7 @@
 
             if(!chatObj.isGroup) {
                 if(readTimer) clearTimeout(readTimer);
-                readTimer = setTimeout(() => {
-                    socket.emit('mark_messages_read', { userPhone: currentUser.phone, chatPartnerId: chatObj.phone, isGroup: false });
-                }, 800);
+                socket.emit('mark_messages_read', { userPhone: currentUser.phone, chatPartnerId: chatObj.phone, isGroup: false });
             }
 
             renderMessages();
@@ -1119,9 +1178,10 @@
             activeCallType = callType;
             activeCallIsGroup = isGroup;
             activeCallTargets = targets;
+            callParticipantsCount = 1; // Chi chiama è il primo partecipante
 
             document.getElementById('call-partner-label').innerText = isGroup ? "Chiamata di Gruppo" : `A: ${getDisplayName(targets[0])}`;
-            document.getElementById('call-status-text').innerText = "Connessione in corso...";
+            document.getElementById('call-status-text').innerText = "In attesa di risposta...";
             
             document.getElementById('answer-call-btn').style.display = 'none';
             document.getElementById('decline-call-btn').style.display = 'none';
@@ -1143,19 +1203,6 @@
                     isGroup: isGroup,
                     groupId: groupId
                 });
-
-                if(!isGroup && targets.length > 0) {
-                    let pc = createPeerConnectionForUser(targets[0]);
-                    const offer = await pc.createOffer();
-                    await pc.setLocalDescription(offer);
-                    socket.emit('join_call', {
-                        callId: activeCallId,
-                        userPhone: currentUser.phone,
-                        userName: currentUser.name,
-                        toIdentifier: targets[0],
-                        signal: offer
-                    });
-                }
 
                 startCallTimer();
             } catch(e) {
@@ -1179,9 +1226,19 @@
 
                 if(incomingCallPayload) {
                     let callerPhone = incomingCallPayload.initiatorPhone;
-                    createPeerConnectionForUser(callerPhone);
+                    let pc = createPeerConnectionForUser(callerPhone);
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    socket.emit('join_call', {
+                        callId: activeCallId,
+                        userPhone: currentUser.phone,
+                        userName: currentUser.name,
+                        toIdentifier: callerPhone,
+                        signal: offer
+                    });
                 }
 
+                socket.emit('call_accepted', { callId: activeCallId, userPhone: currentUser.phone });
                 startCallTimer();
             } catch(e) {
                 closeCallWindow();
@@ -1205,8 +1262,8 @@
 
             const pc = new RTCPeerConnection(rtcConfig);
             peerConnections[remotePhone] = pc;
+            callParticipantsCount++;
 
-            // FONDAMENTALE PER LA BILATERALITÀ: Inserisce le tracce audio/video locali prima di scambiare i segnali
             if(localStream) {
                 localStream.getTracks().forEach(track => {
                     pc.addTrack(track, localStream);
@@ -1247,6 +1304,27 @@
             return pc;
         }
 
+        socket.on('call_peer_joined', async (data) => {
+            if(data.userPhone !== currentUser.phone) {
+                createPeerConnectionForUser(data.userPhone);
+            }
+        });
+
+        // Gestione punti 3 e 4: Chiusura automatica se si rimane in 1
+        socket.on('call_participant_left', (data) => {
+            let wrap = document.getElementById('wrap_remote_video_' + data.userPhone);
+            if(wrap) wrap.remove();
+            if(peerConnections[data.userPhone]) {
+                peerConnections[data.userPhone].close();
+                delete peerConnections[data.userPhone];
+            }
+            callParticipantsCount = Math.max(1, callParticipantsCount - 1);
+            if(callParticipantsCount <= 1) {
+                showNotificationBanner("L'altro utente ha chiuso la chiamata. Chiusura in corso...");
+                closeCallWindow();
+            }
+        });
+
         function startCallTimer() {
             const timerDisplay = document.getElementById('call-timer-display');
             if(!timerDisplay) return;
@@ -1269,6 +1347,9 @@
         }
 
         function closeCallWindow() {
+            if(activeCallId) {
+                socket.emit('leave_call', { callId: activeCallId, userPhone: currentUser?.phone });
+            }
             if(callTimerInterval) {
                 clearInterval(callTimerInterval);
                 callTimerInterval = null;
@@ -1289,6 +1370,7 @@
             incomingCallPayload = null;
             activeCallTargets = [];
             callSecondsElapsed = 0;
+            callParticipantsCount = 0;
             loadCallLogsFromServer();
         }
 
