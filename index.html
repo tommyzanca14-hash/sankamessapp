@@ -421,7 +421,6 @@
                     playNotificationSound();
                     showNotificationBanner(`Nuovo messaggio ricevuto`);
                     
-                    // Risoluzione Punto 4: Se riceviamo un messaggio da un mittente sconosciuto non in rubrica, richiediamo subito i dati completi (inclusa mail) dal server
                     let existingContact = contacts.find(c => c.phone === msg.sender);
                     if(!existingContact) {
                         socket.emit('get_user_details', { phone: msg.sender }, (res) => {
@@ -482,7 +481,6 @@
                 let exists = messages.some(m => m.id === dbMsg.id || (m.id && m.id.toString() === dbMsg.id.toString()));
                 if(!exists) {
                     messages.push(dbMsg);
-                    // Sincronizzazione automatica mittenti storici per risolvere la mail a N/D (Punto 4)
                     let otherPhone = (dbMsg.sender === currentUser.phone) ? dbMsg.recipient : dbMsg.sender;
                     if(otherPhone && !dbMsg.isGroup && !contacts.some(c => c.phone === otherPhone)) {
                         socket.emit('get_user_details', { phone: otherPhone }, (res) => {
@@ -621,14 +619,14 @@
                     
                     if(existing) {
                         existing.name = nickname;
-                        existing.email = realUser.email; // Risoluzione Punto 4: Aggiornamento corretto dell'email
+                        existing.email = realUser.email;
                         existing.realName = realUser.name;
                         existing.isSaved = true;
                     } else {
                         contacts.push({ 
                             name: nickname, 
                             phone: realUser.phone, 
-                            email: realUser.email, // Risoluzione Punto 4: Salva l'email corretta
+                            email: realUser.email, 
                             realName: realUser.name,
                             isSaved: true 
                         });
@@ -913,7 +911,6 @@
         function openContactInfoModal() {
             if(!currentChatContact || currentChatContact.isGroup) return;
             
-            // Risoluzione Punto 4: Se l'email è N/D, proviamo a richiederla al server in tempo reale prima di aprire il modale
             let details = getContactDetails(currentChatContact.phone);
             document.getElementById('modal-contact-nickname').innerText = details.name || 'Non salvato';
             document.getElementById('modal-contact-username').innerText = details.realName || details.name;
@@ -1215,7 +1212,6 @@
                 }
             };
 
-            // Risoluzione Punto 1 & 2: Gestione corretta dell'evento ontrack bidirezionale sia su chiamante che ricevente
             pc.ontrack = (event) => {
                 let container = document.getElementById('call-videos-container');
                 let videoId = 'remote_video_' + remotePhone;
