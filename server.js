@@ -61,7 +61,7 @@ const callLogSchema = new mongoose.Schema({
     initiatorPhone: String,
     initiatorName: String,
     participants: [{ phone: String, name: String }],
-    status: { type: String, default: 'completed' }, // completed, declined
+    status: { type: String, default: 'pending' }, // pending, completed, declined, missed
     timestamp: { type: Date, default: Date.now }
 });
 const CallLog = mongoose.model('CallLog', callLogSchema);
@@ -103,7 +103,7 @@ io.on('connection', (socket) => {
                 socket.emit('receive_message', msg);
                 
                 const senderSocketId = activeUsers.get(msg.sender);
-                if (senderSocketId) {
+                if (senderSocketId && io.sockets.sockets.has(senderSocketId)) {
                     io.to(senderSocketId).emit('message_status_update', { messageId: msg._id, status: 'delivered' });
                 }
             }
@@ -132,7 +132,7 @@ io.on('connection', (socket) => {
                     socket.emit('receive_message', msg);
 
                     const senderSocketId = activeUsers.get(msg.sender);
-                    if (senderSocketId) {
+                    if (senderSocketId && io.sockets.sockets.has(senderSocketId)) {
                         io.to(senderSocketId).emit('message_status_update', { messageId: msg._id, status: 'delivered' });
                     }
                 }
@@ -188,7 +188,7 @@ io.on('connection', (socket) => {
 
             members.forEach(phone => {
                 const sId = activeUsers.get(phone);
-                if (sId) {
+                if (sId && io.sockets.sockets.has(sId)) {
                     const targetSocket = io.sockets.sockets.get(sId);
                     if (targetSocket) targetSocket.join(newGroup._id.toString());
                 }
@@ -267,7 +267,7 @@ io.on('connection', (socket) => {
 
             if (!isGroup) {
                 const senderSocketId = activeUsers.get(chatPartnerId);
-                if (senderSocketId) {
+                if (senderSocketId && io.sockets.sockets.has(senderSocketId)) {
                     io.to(senderSocketId).emit('messages_read_receipt', { readerPhone: userPhone });
                 }
             }
@@ -339,7 +339,7 @@ io.on('connection', (socket) => {
                 initiatorPhone: data.initiatorPhone,
                 initiatorName: data.initiatorName,
                 participants: participantsList,
-                status: 'completed'
+                status: 'pending' // Stato iniziale corretto per evitare falsi positivi
             });
             await callLog.save();
 
@@ -369,12 +369,13 @@ io.on('connection', (socket) => {
     socket.on('join_call', async (data) => {
         try {
             await CallLog.findByIdAndUpdate(data.callId, {
+                status: 'completed',
                 $addToSet: { participants: { phone: data.userPhone, name: data.userName } }
             });
 
             if (data.toIdentifier) {
                 const recipientSocketId = activeUsers.get(data.toIdentifier);
-                if (recipientSocketId) {
+                if (recipientSocketId && io.sockets.sockets.has(recipientSocketId)) {
                     io.to(recipientSocketId).emit('call_signal', {
                         fromPhone: data.userPhone,
                         signal: data.signal
@@ -388,7 +389,7 @@ io.on('connection', (socket) => {
 
     socket.on('call_signal', (data) => {
         const recipientSocketId = activeUsers.get(data.toIdentifier);
-        if (recipientSocketId) {
+        if (recipientSocketId && io.sockets.sockets.has(recipientSocketId)) {
             io.to(recipientSocketId).emit('call_signal', {
                 fromPhone: data.fromPhone,
                 signal: data.signal
@@ -402,26 +403,32 @@ io.on('connection', (socket) => {
         }
         if (data && data.toIdentifier) {
             const recipientSocketId = activeUsers.get(data.toIdentifier);
-            if (recipientSocketId) {
+            if (recipientSocketId && io.sockets.sockets.has(recipientSocketId)) {
                 io.to(recipientSocketId).emit('call_declined', { fromPhone: data.fromPhone, userName: data.userName });
             }
         }
     });
 
     socket.on('hang_up_call', async (data) => {
+        if (data && data.callId) {
+            await CallLog.findByIdAndUpdate(data.callId, { status: 'completed' });
+        }
         if (data && data.targets) {
             data.targets.forEach(phone => {
                 const sId = activeUsers.get(phone);
-                if (sId) io.to(sId).emit('call_ended');
+                if (sId && io.sockets.sockets.has(sId)) io.to(sId).emit('call_ended');
             });
         }
     });
 
-    socket.on('end_call_for_all', (data) => {
+    socket.on('end_call_for_all', async (data) => {
+        if (data && data.callId) {
+            await CallLog.findByIdAndUpdate(data.callId, { status: 'completed' });
+        }
         if (data && data.targets) {
             data.targets.forEach(phone => {
                 const sId = activeUsers.get(phone);
-                if (sId) io.to(sId).emit('call_ended');
+                if (sId && io.sockets.sockets.has(sId)) io.to(sId).emit('call_ended');
             });
         }
     });
@@ -442,7 +449,10 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         if (socket.userPhone) {
-            activeUsers.delete(socket.userPhone);
+            const currentSocket = activeUsers.get(socket.userPhone);
+            if (currentSocket === socket.id) {
+                activeUsers.delete(socket.userPhone);
+            }
         }
         console.log('Utente disconnesso:', socket.id);
     });
