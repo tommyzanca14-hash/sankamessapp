@@ -71,6 +71,16 @@
         .section-header { padding: 15px; background: white; font-size: 18px; font-weight: bold; border-bottom: 1px solid #dee2e6; color: #343a40; }
         .p-15 { padding: 15px; }
 
+        /* Stili Registro Chiamate */
+        .call-log-list { flex: 1; overflow-y: auto; background: white; }
+        .call-log-item { padding: 14px 15px; border-bottom: 1px solid #f1f3f5; display: flex; justify-content: space-between; align-items: center; }
+        .call-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+        .dot-gray { background: #adb5bd; }
+        .dot-red { background: #dc3545; }
+        .dot-orange { background: #fd7e14; }
+        .dot-yellow { background: #ffc107; }
+        .dot-green { background: #28a745; }
+
         #notification-banner {
             position: fixed; top: -60px; left: 50%; transform: translateX(-50%);
             background: #212529; color: white; padding: 12px 20px; border-radius: 8px;
@@ -131,6 +141,7 @@
     <div id="call-window">
         <div style="text-align: center; margin-top: 10px;">
             <h3 id="call-status-text">Chiamata in corso...</h3>
+            <p id="call-timer-display" style="font-size: 16px; color: #28a745; font-weight: bold; margin-top: 4px; display: none;">00:00</p>
             <p id="call-partner-label" style="font-size: 14px; color: #adb5bd;"></p>
         </div>
         <div class="call-videos">
@@ -175,8 +186,10 @@
     </div>
 
     <div id="section-calls" class="content-section">
-        <div class="section-header">Chiamate e Videochiamate</div>
-        <div class="p-15"><p style="color:#495057;">Seleziona un contatto dalla sezione Chat per avviare una chiamata o videochiamata.</p></div>
+        <div class="section-header">Registro Chiamate</div>
+        <div class="call-log-list" id="call-log-container">
+            <!-- Storico delle chiamate -->
+        </div>
     </div>
 
     <div id="section-add" class="content-section">
@@ -217,6 +230,7 @@
         let currentUser = null;
         let contacts = []; 
         let messages = [];
+        let callLogs = []; // Array per il registro chiamate
         let currentChatContact = null;
         let isAlphabetical = false;
 
@@ -224,6 +238,14 @@
         let localStream;
         let incomingCallData = null;
         
+        let callTimerInterval = null;
+        let callSecondsElapsed = 0;
+        let callStatusState = 'gray'; // gray, red, orange, yellow, green
+        let activeCallPartner = null;
+        let activeCallType = 'audio';
+        let isCaller = false;
+        let ringTimeout = null;
+
         const rtcConfig = { 
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
@@ -267,6 +289,7 @@
                 socket.emit('login_user', { phone: currentUser.phone });
                 requestAllChatsHistory();
                 updateContactsDisplay();
+                updateCallLogDisplay();
             }
         };
 
@@ -279,6 +302,7 @@
             socket.emit('login_user', { phone: currentUser.phone });
             requestAllChatsHistory();
             updateContactsDisplay();
+            updateCallLogDisplay();
         });
 
         socket.on('registration_error', (err) => alert(err));
@@ -302,11 +326,18 @@
             if(!currentUser) return;
             let savedContacts = localStorage.getItem('omega7_contacts_' + currentUser.phone);
             contacts = savedContacts ? JSON.parse(savedContacts) : [];
+            let savedCalls = localStorage.getItem('omega7_calls_' + currentUser.phone);
+            callLogs = savedCalls ? JSON.parse(savedCalls) : [];
         }
 
         function saveContactsToLocalStorage() {
             if(!currentUser) return;
             localStorage.setItem('omega7_contacts_' + currentUser.phone, JSON.stringify(contacts));
+        }
+
+        function saveCallsToLocalStorage() {
+            if(!currentUser) return;
+            localStorage.setItem('omega7_calls_' + currentUser.phone, JSON.stringify(callLogs));
         }
 
         socket.on('receive_message', (msg) => {
@@ -383,6 +414,11 @@
         socket.on('incoming_call', (data) => {
             if(!currentUser) return;
             incomingCallData = data;
+            isCaller = false;
+            activeCallPartner = data.fromPhone;
+            activeCallType = data.callType || 'audio';
+            callStatusState = 'yellow'; // Se non risponde nessuno (ricevente)
+
             playNotificationSound();
             showNotificationBanner(`Chiamata in arrivo da ${data.fromName || data.fromPhone}`);
             document.getElementById('call-partner-label').innerText = `Da: ${data.fromName || data.fromPhone}`;
@@ -391,13 +427,24 @@
             document.getElementById('call-window').style.display = 'flex';
         });
 
-        socket.on('call_failed', (data) => { alert(data.reason); closeCallWindow(); });
+        socket.on('call_failed', (data) => { 
+            // Se destinatario non raggiungibile o offline
+            callStatusState = 'red';
+            alert(data.reason || "Chiamata non arrivata al destinatario."); 
+            closeCallWindow(); 
+        });
+
+        socket.on('call_rejected', () => {
+            callStatusState = 'orange'; // Rifiutata
+            showNotificationBanner("Chiamata rifiutata dall'utente.");
+            closeCallWindow();
+        });
 
         socket.on('call_accepted', async (data) => {
             if(peerConnection) {
                 try {
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signal));
-                    document.getElementById('call-status-text').innerText = "Chiamata in corso";
+                    startCallTimerAndGreenState();
                 } catch(e) {}
             }
         });
@@ -408,7 +455,9 @@
             }
         });
 
-        socket.on('call_ended', () => closeCallWindow());
+        socket.on('call_ended', () => {
+            closeCallWindow();
+        });
 
         function registerUser() {
             const name = document.getElementById('reg-name').value.trim();
@@ -427,6 +476,9 @@
             document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
             document.getElementById('section-' + tabName).classList.add('active');
             element.classList.add('active');
+            if(tabName === 'calls') {
+                updateCallLogDisplay();
+            }
         }
 
         function addContact() {
@@ -813,20 +865,24 @@
             box.scrollTop = box.scrollHeight;
         }
 
+        // --- GESTIONE CHIAMATE E REGISTRO ---
+
         async function startCall(callType) {
             if(!currentChatContact) return;
+            isCaller = true;
+            activeCallPartner = currentChatContact.phone;
+            activeCallType = callType;
+            callStatusState = 'red'; // Default se fallisce l'invio al server
+
             document.getElementById('call-partner-label').innerText = `A: ${currentChatContact.name}`;
             document.getElementById('call-status-text').innerText = "Connessione in corso...";
+            document.getElementById('call-timer-display').style.display = 'none';
             document.getElementById('answer-call-btn').style.display = 'none';
             document.getElementById('call-window').style.display = 'flex';
 
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: {
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true
-                    }, 
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
                     video: callType === 'video' ? { width: { ideal: 640 }, height: { ideal: 480 } } : false 
                 });
                 
@@ -843,24 +899,38 @@
                     toIdentifier: currentChatContact.phone,
                     signal: offer,
                     callType: callType
+                }, (response) => {
+                    if (response && !response.success) {
+                        callStatusState = 'red';
+                        alert(response.message || "Destinatario non raggiungibile");
+                        closeCallWindow();
+                    }
                 });
+
+                // Timeout di squillo (se non risponde nessuno dopo 25 secondi)
+                ringTimeout = setTimeout(() => {
+                    if(callStatusState === 'red' || callStatusState === 'yellow') {
+                        callStatusState = 'yellow'; // Nessuno ha risposto, eliminato dal mittente
+                        socket.emit('hang_up', { toIdentifier: currentChatContact.phone });
+                        closeCallWindow();
+                    }
+                }, 25000);
+
             } catch (err) {
+                callStatusState = 'gray'; // Errore hardware/connessione inizializzazione
                 alert("Impossibile accedere a microfono o fotocamera.");
                 closeCallWindow();
             }
         }
 
         async function acceptIncomingCall() {
+            if(ringTimeout) clearTimeout(ringTimeout);
             document.getElementById('answer-call-btn').style.display = 'none';
             document.getElementById('call-status-text').innerText = "Connessione in corso...";
 
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: {
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true
-                    }, 
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
                     video: incomingCallData.callType === 'video' ? { width: { ideal: 640 }, height: { ideal: 480 } } : false 
                 });
                 
@@ -876,9 +946,31 @@
                     toIdentifier: incomingCallData.fromPhone,
                     signal: answer
                 });
+
+                startCallTimerAndGreenState();
             } catch (err) {
+                callStatusState = 'gray';
                 closeCallWindow();
             }
+        }
+
+        function startCallTimerAndGreenState() {
+            if(ringTimeout) clearTimeout(ringTimeout);
+            callStatusState = 'green'; // Risposto, chiamata in svolgimento
+            document.getElementById('call-status-text').innerText = "Chiamata in corso";
+            
+            const timerDisplay = document.getElementById('call-timer-display');
+            timerDisplay.style.display = 'block';
+            callSecondsElapsed = 0;
+            timerDisplay.innerText = "00:00";
+
+            if(callTimerInterval) clearInterval(callTimerInterval);
+            callTimerInterval = setInterval(() => {
+                callSecondsElapsed++;
+                let mins = Math.floor(callSecondsElapsed / 60);
+                let secs = callSecondsElapsed % 60;
+                timerDisplay.innerText = `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
+            }, 1000);
         }
 
         function createPeerConnection() {
@@ -899,27 +991,109 @@
                 if (event.streams && event.streams[0]) {
                     remoteVideo.srcObject = event.streams[0];
                     remoteVideo.muted = false;
-                    remoteVideo.play().catch(e => {
-                        console.log("Autoplay bloccato o riprovato:", e);
-                    });
+                    remoteVideo.play().catch(e => {});
                 }
-                document.getElementById('call-status-text').innerText = "Chiamata in corso (Connesso)";
             };
         }
 
         function endCall() {
             let targetIdentifier = currentChatContact ? currentChatContact.phone : (incomingCallData ? incomingCallData.fromPhone : null);
             if(targetIdentifier) socket.emit('hang_up', { toIdentifier: targetIdentifier });
+            
+            // Se eravamo in squillo senza risposta come mittente
+            if(isCaller && callStatusState === 'red') {
+                callStatusState = 'yellow';
+            }
             closeCallWindow();
         }
 
         function closeCallWindow() {
+            if(ringTimeout) clearTimeout(ringTimeout);
+            if(callTimerInterval) {
+                clearInterval(callTimerInterval);
+                callTimerInterval = null;
+            }
+
             if(localStream) localStream.getTracks().forEach(track => track.stop());
             if(peerConnection) { peerConnection.close(); peerConnection = null; }
+
+            // Salva nel registro chiamate se c'è un partner valido
+            let partnerPhone = activeCallPartner || (currentChatContact ? currentChatContact.phone : (incomingCallData ? incomingCallData.fromPhone : null));
+            if(partnerPhone && currentUser) {
+                let formattedDuration = "00:00";
+                if(callSecondsElapsed > 0) {
+                    let mins = Math.floor(callSecondsElapsed / 60);
+                    let secs = callSecondsElapsed % 60;
+                    formattedDuration = `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
+                }
+
+                callLogs.push({
+                    partnerPhone: partnerPhone,
+                    callType: activeCallType,
+                    status: callStatusState,
+                    duration: formattedDuration,
+                    timestamp: new Date()
+                });
+                saveCallsToLocalStorage();
+                updateCallLogDisplay();
+            }
+
             document.getElementById('call-window').style.display = 'none';
             document.getElementById('local-video').srcObject = null;
             document.getElementById('remote-video').srcObject = null;
+            document.getElementById('call-timer-display').style.display = 'none';
             incomingCallData = null;
+            activeCallPartner = null;
+            callSecondsElapsed = 0;
+            callStatusState = 'gray';
+        }
+
+        function updateCallLogDisplay() {
+            const container = document.getElementById('call-log-container');
+            if(!currentUser) return;
+
+            if(callLogs.length === 0) {
+                container.innerHTML = '<div class="p-15" style="font-weight:normal; color:#6c757d;">Nessuna chiamata registrata.</div>';
+                return;
+            }
+
+            // Ordine cronologico decrescente (dal più recente) o crescente base
+            let sortedLogs = [...callLogs].reverse();
+
+            container.innerHTML = '';
+            sortedLogs.forEach(log => {
+                let contactObj = contacts.find(c => c.phone === log.partnerPhone);
+                let displayName = contactObj ? contactObj.name : log.partnerPhone;
+                let callTypeLabel = log.callType === 'video' ? 'Videochiamata' : 'Chiamata audio';
+                
+                let dateObj = new Date(log.timestamp);
+                let dateStr = dateObj.toLocaleDateString();
+                let timeStr = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+                let dotClass = 'dot-gray';
+                let statusDescription = 'Errore / Non partita';
+                if(log.status === 'red') { dotClass = 'dot-red'; statusDescription = 'Non arrivata al destinatario'; }
+                else if(log.status === 'orange') { dotClass = 'dot-orange'; statusDescription = 'Rifiutata'; }
+                else if(log.status === 'yellow') { dotClass = 'dot-yellow'; statusDescription = 'Nessuna risposta / Annullata'; }
+                else if(log.status === 'green') { dotClass = 'dot-green'; statusDescription = `Svolta (${log.duration})`; }
+
+                const div = document.createElement('div');
+                div.className = 'call-log-item';
+                div.innerHTML = `
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <span class="call-dot ${dotClass}" title="${statusDescription}"></span>
+                        <div>
+                            <b style="color: #212529; font-size: 15px;">${displayName}</b>
+                            <div style="font-size: 12px; color: #6c757d; font-weight: normal;">${callTypeLabel} - ${statusDescription}</div>
+                        </div>
+                    </div>
+                    <div style="text-align: right; font-size: 12px; color: #495057;">
+                        <div>${dateStr}</div>
+                        <div style="font-weight: normal; color: #6c757d;">${timeStr}</div>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
         }
     </script>
 </body>
