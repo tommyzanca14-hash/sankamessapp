@@ -68,6 +68,17 @@ const CallLog = mongoose.model('CallLog', callLogSchema);
 
 const activeUsers = new Map(); // phone -> Set di socket.id
 
+// Funzione d'appoggio per registrare in modo sicuro un utente online
+const registerSocketUser = (phone, socketInstance) => {
+    let cleanPhone = phone.trim();
+    if (!activeUsers.has(cleanPhone)) {
+        activeUsers.set(cleanPhone, new Set());
+    }
+    activeUsers.get(cleanPhone).add(socketInstance.id);
+    socketInstance.userPhone = cleanPhone;
+    console.log(`Utente registrato online: ${cleanPhone} (Socket ID: ${socketInstance.id})`);
+};
+
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
 
@@ -92,12 +103,7 @@ io.on('connection', (socket) => {
                 await user.save();
             }
 
-            if (!activeUsers.has(user.phone)) {
-                activeUsers.set(user.phone, new Set());
-            }
-            activeUsers.get(user.phone).add(socket.id);
-            socket.userPhone = user.phone;
-
+            registerSocketUser(user.phone, socket);
             socket.emit('registration_success', user);
 
             const pending = await Message.find({ recipient: user.phone, status: 'sent', isGroup: false });
@@ -124,12 +130,7 @@ io.on('connection', (socket) => {
             if (!data || !data.phone) return;
             let user = await User.findOne({ phone: data.phone.trim() });
             if (user) {
-                if (!activeUsers.has(user.phone)) {
-                    activeUsers.set(user.phone, new Set());
-                }
-                activeUsers.get(user.phone).add(socket.id);
-                socket.userPhone = user.phone;
-
+                registerSocketUser(user.phone, socket);
                 socket.emit('login_success', user);
 
                 const userGroups = await Group.find({ members: user.phone });
@@ -297,6 +298,7 @@ io.on('connection', (socket) => {
         }
     });
 
+    // --- AGGIORNAMENTO STATO LETTURA (SPUNTE BLU) ---
     socket.on('mark_messages_read', async (data) => {
         try {
             const { userPhone, chatPartnerId, isGroup } = data;
@@ -362,7 +364,7 @@ io.on('connection', (socket) => {
 
     // --- GESTIONE CHIAMATE WEBRTC ---
     socket.on('check_user_availability', async (data, callback) => {
-        const targetPhone = data.targetPhone;
+        const targetPhone = data.targetPhone ? data.targetPhone.trim() : '';
         const targetSockets = activeUsers.get(targetPhone);
         const isOnline = targetSockets && targetSockets.size > 0;
         if (typeof callback === 'function') {
