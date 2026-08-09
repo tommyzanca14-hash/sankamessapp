@@ -733,7 +733,27 @@
                 return (isFromMe && isToPartner) || (isFromPartner && isToMe);
             });
 
+            let lastDateString = null;
+
             chatMessages.forEach(msg => {
+                const msgDate = new Date(msg.timestamp || Date.now());
+                const todayStr = new Date().toLocaleDateString();
+                const msgDateStr = msgDate.toLocaleDateString();
+                
+                let dateDividerLabel = msgDateStr;
+                if (msgDateStr === todayStr) {
+                    dateDividerLabel = "Oggi";
+                }
+
+                if (dateDividerLabel !== lastDateString) {
+                    lastDateString = dateDividerLabel;
+                    const dateDiv = document.createElement('div');
+                    dateDiv.style.textAlign = "center";
+                    dateDiv.style.margin = "15px 0 10px 0";
+                    dateDiv.innerHTML = `<span style="background: rgba(0,0,0,0.1); color: #495057; padding: 4px 10px; border-radius: 8px; font-size: 11px; font-weight: bold;">${dateDividerLabel}</span>`;
+                    box.appendChild(dateDiv);
+                }
+
                 const isSent = (msg.sender === currentUser.phone);
                 const bubble = document.createElement('div');
                 bubble.className = 'message-bubble ' + (isSent ? 'sent' : 'received');
@@ -745,7 +765,7 @@
                 let footer = document.createElement('div');
                 footer.className = 'message-footer';
                 
-                let timeStr = new Date(msg.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                let timeStr = msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 let timeSpan = document.createElement('span');
                 timeSpan.innerText = timeStr;
                 footer.appendChild(timeSpan);
