@@ -421,6 +421,24 @@
                     playNotificationSound();
                     showNotificationBanner(`Nuovo messaggio ricevuto`);
                     
+                    // Risoluzione Punto 4: Se riceviamo un messaggio da un mittente sconosciuto non in rubrica, richiediamo subito i dati completi (inclusa mail) dal server
+                    let existingContact = contacts.find(c => c.phone === msg.sender);
+                    if(!existingContact) {
+                        socket.emit('get_user_details', { phone: msg.sender }, (res) => {
+                            if(res.success && res.user) {
+                                contacts.push({
+                                    name: res.user.name,
+                                    phone: res.user.phone,
+                                    email: res.user.email,
+                                    realName: res.user.name,
+                                    isSaved: false
+                                });
+                                saveContactsToLocalStorage();
+                                updateContactsDisplay();
+                            }
+                        });
+                    }
+
                     if(currentChatContact && !currentChatContact.isGroup && currentChatContact.phone === msg.sender) {
                         if(readTimer) clearTimeout(readTimer);
                         readTimer = setTimeout(() => {
@@ -462,7 +480,26 @@
             history.forEach(dbMsg => {
                 dbMsg.id = dbMsg._id || dbMsg.id;
                 let exists = messages.some(m => m.id === dbMsg.id || (m.id && m.id.toString() === dbMsg.id.toString()));
-                if(!exists) messages.push(dbMsg);
+                if(!exists) {
+                    messages.push(dbMsg);
+                    // Sincronizzazione automatica mittenti storici per risolvere la mail a N/D (Punto 4)
+                    let otherPhone = (dbMsg.sender === currentUser.phone) ? dbMsg.recipient : dbMsg.sender;
+                    if(otherPhone && !dbMsg.isGroup && !contacts.some(c => c.phone === otherPhone)) {
+                        socket.emit('get_user_details', { phone: otherPhone }, (res) => {
+                            if(res.success && res.user) {
+                                contacts.push({
+                                    name: res.user.name,
+                                    phone: res.user.phone,
+                                    email: res.user.email,
+                                    realName: res.user.name,
+                                    isSaved: false
+                                });
+                                saveContactsToLocalStorage();
+                                updateContactsDisplay();
+                            }
+                        });
+                    }
+                }
             });
             updateContactsDisplay();
             if(currentChatContact) renderMessages();
@@ -583,19 +620,22 @@
                     let existing = contacts.find(c => c.phone === realUser.phone);
                     
                     if(existing) {
-                        alert(`Contatto già registrato, nome: ${existing.name}`);
+                        existing.name = nickname;
+                        existing.email = realUser.email; // Risoluzione Punto 4: Aggiornamento corretto dell'email
+                        existing.realName = realUser.name;
+                        existing.isSaved = true;
                     } else {
                         contacts.push({ 
                             name: nickname, 
                             phone: realUser.phone, 
-                            email: realUser.email,
+                            email: realUser.email, // Risoluzione Punto 4: Salva l'email corretta
                             realName: realUser.name,
                             isSaved: true 
                         });
-                        saveContactsToLocalStorage();
-                        updateContactsDisplay();
-                        alert(`Contatto salvato con successo come: ${nickname}`);
                     }
+                    saveContactsToLocalStorage();
+                    updateContactsDisplay();
+                    alert(`Contatto salvato con successo come: ${nickname}`);
 
                     document.getElementById('new-contact-identifier').value = '';
                     document.getElementById('new-contact-nickname').value = '';
@@ -607,7 +647,7 @@
         }
 
         function getContactDetails(phone) {
-            if(!currentUser || phone === currentUser.phone) return { name: "Tu", realName: currentUser?.name, email: currentUser?.email };
+            if(!currentUser || phone === currentUser.phone) return { name: "Tu", realName: currentUser?.name, email: currentUser?.email, phone: currentUser?.phone };
             let saved = contacts.find(c => c.phone === phone);
             if(saved) return saved;
             return { name: "~" + phone, realName: phone, email: 'N/D', phone: phone };
@@ -872,12 +912,26 @@
 
         function openContactInfoModal() {
             if(!currentChatContact || currentChatContact.isGroup) return;
+            
+            // Risoluzione Punto 4: Se l'email è N/D, proviamo a richiederla al server in tempo reale prima di aprire il modale
             let details = getContactDetails(currentChatContact.phone);
             document.getElementById('modal-contact-nickname').innerText = details.name || 'Non salvato';
             document.getElementById('modal-contact-username').innerText = details.realName || details.name;
             document.getElementById('modal-contact-phone').innerText = details.phone;
             document.getElementById('modal-contact-email').innerText = details.email || 'N/D';
             document.getElementById('contact-info-modal').style.display = 'flex';
+
+            if(!details.email || details.email === 'N/D') {
+                socket.emit('get_user_details', { phone: currentChatContact.phone }, (res) => {
+                    if(res.success && res.user) {
+                        details.email = res.user.email;
+                        details.realName = res.user.name;
+                        document.getElementById('modal-contact-username').innerText = res.user.name;
+                        document.getElementById('modal-contact-email').innerText = res.user.email;
+                        saveContactsToLocalStorage();
+                    }
+                });
+            }
         }
 
         function quickSaveContact() {
@@ -885,13 +939,20 @@
             if(!customName) return;
 
             let details = getContactDetails(currentChatContact.phone);
-            contacts.push({ 
-                name: customName, 
-                phone: currentChatContact.phone, 
-                email: details.email || 'N/D',
-                realName: details.realName || currentChatContact.phone,
-                isSaved: true 
-            });
+            
+            let existingIndex = contacts.findIndex(c => c.phone === currentChatContact.phone);
+            if(existingIndex !== -1) {
+                contacts[existingIndex].name = customName;
+                contacts[existingIndex].isSaved = true;
+            } else {
+                contacts.push({ 
+                    name: customName, 
+                    phone: currentChatContact.phone, 
+                    email: details.email || 'N/D',
+                    realName: details.realName || currentChatContact.phone,
+                    isSaved: true 
+                });
+            }
 
             saveContactsToLocalStorage();
             currentChatContact.name = customName;
@@ -899,6 +960,7 @@
             document.getElementById('chat-partner-name').innerText = customName;
             document.getElementById('quick-save-btn').style.display = 'none';
             updateContactsDisplay();
+            alert("Contatto salvato con successo!");
         }
 
         function closeChat() {
@@ -1153,6 +1215,7 @@
                 }
             };
 
+            // Risoluzione Punto 1 & 2: Gestione corretta dell'evento ontrack bidirezionale sia su chiamante che ricevente
             pc.ontrack = (event) => {
                 let container = document.getElementById('call-videos-container');
                 let videoId = 'remote_video_' + remotePhone;
