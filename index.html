@@ -367,7 +367,7 @@
         socket.on('registration_success', (userData) => {
             currentUser = userData;
             localStorage.setItem('omega7_user', JSON.stringify(userData));
-            loadLocalStorageData();
+            syncContactsFromServer(userData.savedContacts);
             document.getElementById('profile-info').innerText = `Username: ${currentUser.name} | Tel: ${currentUser.phone} | Email: ${currentUser.email}`;
             document.getElementById('register-screen').style.display = 'none';
             socket.emit('login_user', { phone: currentUser.phone });
@@ -378,11 +378,39 @@
         });
 
         socket.on('registration_error', (err) => alert(err));
+        
         socket.on('login_success', (userData) => {
             currentUser = userData;
+            syncContactsFromServer(userData.savedContacts);
             requestAllChatsHistory();
             socket.emit('get_user_groups', { userPhone: currentUser.phone });
         });
+
+        function syncContactsFromServer(serverContacts) {
+            if (!serverContacts) return;
+            serverContacts.forEach(sc => {
+                if (sc.contactId) {
+                    let contactUser = sc.contactId;
+                    let existing = contacts.find(c => c.phone === contactUser.phone);
+                    if (existing) {
+                        existing.name = sc.customName;
+                        existing.email = contactUser.email;
+                        existing.realName = contactUser.name;
+                        existing.isSaved = true;
+                    } else {
+                        contacts.push({
+                            name: sc.customName,
+                            phone: contactUser.phone,
+                            email: contactUser.email,
+                            realName: contactUser.name,
+                            isSaved: true
+                        });
+                    }
+                }
+            });
+            saveContactsToLocalStorage();
+            updateContactsDisplay();
+        }
 
         socket.on('user_groups_list', (list) => {
             groups = list;
@@ -624,7 +652,7 @@
             socket.emit('get_call_logs', { userPhone: currentUser.phone });
         }
 
-        function addContact() {
+        async function addContact() {
             const identifier = document.getElementById('new-contact-identifier').value.trim();
             const nickname = document.getElementById('new-contact-nickname').value.trim();
             
@@ -633,28 +661,48 @@
                 return;
             }
 
-            socket.emit('lookup_contact', identifier, (response) => {
+            socket.emit('lookup_contact', identifier, async (response) => {
                 if(response.success) {
                     const realUser = response.user;
-                    let existing = contacts.find(c => c.phone === realUser.phone);
                     
-                    if(existing) {
-                        existing.name = nickname;
-                        existing.email = realUser.email;
-                        existing.realName = realUser.name;
-                        existing.isSaved = true;
-                    } else {
-                        contacts.push({ 
-                            name: nickname, 
-                            phone: realUser.phone, 
-                            email: realUser.email, 
-                            realName: realUser.name,
-                            isSaved: true 
+                    try {
+                        const res = await fetch('/api/contacts/save', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                userPhone: currentUser.phone,
+                                contactPhone: realUser.phone,
+                                customName: nickname
+                            })
                         });
+                        const data = await res.json();
+                        if (data.success) {
+                            syncContactsFromServer(data.savedContacts);
+                            alert(`Contatto salvato con successo come: ${nickname}`);
+                        } else {
+                            alert(data.message || "Errore nel salvataggio del contatto sul server.");
+                        }
+                    } catch (e) {
+                        console.error(e);
+                        let existing = contacts.find(c => c.phone === realUser.phone);
+                        if(existing) {
+                            existing.name = nickname;
+                            existing.email = realUser.email;
+                            existing.realName = realUser.name;
+                            existing.isSaved = true;
+                        } else {
+                            contacts.push({ 
+                                name: nickname, 
+                                phone: realUser.phone, 
+                                email: realUser.email, 
+                                realName: realUser.name,
+                                isSaved: true 
+                            });
+                        }
+                        saveContactsToLocalStorage();
+                        updateContactsDisplay();
+                        alert(`Contatto salvato localmente come: ${nickname}`);
                     }
-                    saveContactsToLocalStorage();
-                    updateContactsDisplay();
-                    alert(`Contatto salvato con successo come: ${nickname}`);
 
                     document.getElementById('new-contact-identifier').value = '';
                     document.getElementById('new-contact-nickname').value = '';
@@ -942,7 +990,7 @@
 
         function openChat(chatObj) {
             currentChatContact = chatObj;
-            lastRenderedChatPartner = null; // Forza il reset del rendering all'apertura
+            lastRenderedChatPartner = null; 
             document.getElementById('chat-partner-name').innerText = chatObj.name;
             
             const saveBtn = document.getElementById('quick-save-btn');
@@ -1001,27 +1049,43 @@
             }
         }
 
-        function quickSaveContact() {
+        async function quickSaveContact() {
             let customName = prompt("Inserisci il nome in rubrica per:", currentChatContact.phone);
             if(!customName) return;
 
             let details = getContactDetails(currentChatContact.phone);
             
-            let existingIndex = contacts.findIndex(c => c.phone === currentChatContact.phone);
-            if(existingIndex !== -1) {
-                contacts[existingIndex].name = customName;
-                contacts[existingIndex].isSaved = true;
-            } else {
-                contacts.push({ 
-                    name: customName, 
-                    phone: currentChatContact.phone, 
-                    email: details.email || 'N/D',
-                    realName: details.realName || currentChatContact.phone,
-                    isSaved: true 
+            try {
+                const res = await fetch('/api/contacts/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        userPhone: currentUser.phone,
+                        contactPhone: currentChatContact.phone,
+                        customName: customName
+                    })
                 });
+                const data = await res.json();
+                if(data.success) {
+                    syncContactsFromServer(data.savedContacts);
+                }
+            } catch (e) {
+                let existingIndex = contacts.findIndex(c => c.phone === currentChatContact.phone);
+                if(existingIndex !== -1) {
+                    contacts[existingIndex].name = customName;
+                    contacts[existingIndex].isSaved = true;
+                } else {
+                    contacts.push({ 
+                        name: customName, 
+                        phone: currentChatContact.phone, 
+                        email: details.email || 'N/D',
+                        realName: details.realName || currentChatContact.phone,
+                        isSaved: true 
+                    });
+                }
+                saveContactsToLocalStorage();
             }
 
-            saveContactsToLocalStorage();
             currentChatContact.name = customName;
             currentChatContact.isSaved = true;
             document.getElementById('chat-partner-name').innerText = customName;
@@ -1092,7 +1156,6 @@
             return dateObj.toLocaleDateString();
         }
 
-        // Funzione ottimizzata per evitare lag ed evitare il reset completo se non necessario
         function renderMessages() {
             const box = document.getElementById('messages-box');
             if(!box || !currentChatContact || !currentUser) return;
