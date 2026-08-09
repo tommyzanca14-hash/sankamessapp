@@ -120,7 +120,7 @@
         </div>
     </div>
 
-    <!-- Modale Info Gruppo (Punto 5) -->
+    <!-- Modale Info Gruppo -->
     <div id="group-info-modal" class="modal-overlay">
         <div class="modal-content">
             <h3 id="group-modal-title">Membri del Gruppo</h3>
@@ -221,7 +221,7 @@
         </div>
         <div class="active-chat-messages" id="messages-box"></div>
         <div class="active-chat-input">
-            <input type="text" id="message-input" placeholder="Scrivi un messaggio...">
+            <input type="text" id="message-input" placeholder="Scrivi un messaggio..." onkeydown="if(event.key==='Enter') sendMessage()">
             <button onclick="sendMessage()">Invia</button>
         </div>
     </div>
@@ -300,6 +300,7 @@
         let currentChatContact = null;
         let isAlphabetical = false;
         let readTimer = null;
+        let lastRenderedChatPartner = null;
 
         let peerConnections = {}; 
         let localStream = null;
@@ -310,7 +311,7 @@
         let callSecondsElapsed = 0;
         let incomingCallPayload = null;
         let activeCallTargets = [];
-        let callParticipantsCount = 0; // Traccia quanti utenti sono attivi nella chiamata
+        let callParticipantsCount = 0;
 
         const rtcConfig = { 
             iceServers: [
@@ -451,7 +452,6 @@
                         });
                     }
 
-                    // PUNTO 1: Invio immediato della spunta blu se siamo dentro la chat attiva con l'utente
                     if(currentChatContact && !currentChatContact.isGroup && currentChatContact.phone === msg.sender) {
                         if(readTimer) clearTimeout(readTimer);
                         socket.emit('mark_messages_read', { userPhone: currentUser.phone, chatPartnerId: msg.sender, isGroup: false });
@@ -469,7 +469,10 @@
         });
 
         socket.on('message_status_update', (data) => {
-            let m = messages.find(item => item.id === data.messageId || (item._id && item._id.toString() === data.messageId.toString()));
+            let m = messages.find(item => 
+                (item.id && item.id.toString() === data.messageId.toString()) || 
+                (item._id && item._id.toString() === data.messageId.toString())
+            );
             if(m) {
                 m.status = data.status;
                 if(currentChatContact) renderMessages();
@@ -532,7 +535,7 @@
             activeCallType = data.callType;
             activeCallIsGroup = data.isGroup;
             activeCallTargets = data.targets || [];
-            callParticipantsCount = 2; // Partiamo con almeno mittente e destinatario
+            callParticipantsCount = 2;
 
             playNotificationSound();
             showNotificationBanner(`Chiamata in arrivo da ${data.initiatorName}`);
@@ -726,7 +729,6 @@
             });
         }
 
-        // PUNTO 5: Schermata informazioni gruppo e apertura chat cliccando sul nome di un membro
         function openGroupInfoModal() {
             if(!currentChatContact || !currentChatContact.isGroup) return;
             
@@ -746,7 +748,7 @@
                     row.style.borderRadius = '6px';
                     row.style.cursor = 'pointer';
                     row.style.display = 'flex';
-                    row.style.justify0content = 'space-between';
+                    row.style.justifyContent = 'space-between';
                     row.style.alignItems = 'center';
                     row.innerHTML = `<span style="font-weight:bold; color:#007bff;">${details.name}</span> <span style="font-size:12px; color:#6c757d;">${phone}</span>`;
                     
@@ -756,7 +758,6 @@
                     row.onclick = () => {
                         closeModal('group-info-modal');
                         closeChat();
-                        // Apri la chat singola con questo utente
                         let chatTarget = {
                             isGroup: false,
                             name: details.name,
@@ -941,6 +942,7 @@
 
         function openChat(chatObj) {
             currentChatContact = chatObj;
+            lastRenderedChatPartner = null; // Forza il reset del rendering all'apertura
             document.getElementById('chat-partner-name').innerText = chatObj.name;
             
             const saveBtn = document.getElementById('quick-save-btn');
@@ -1033,6 +1035,7 @@
             if(readTimer) clearTimeout(readTimer);
             document.getElementById('active-chat-window').style.display = 'none';
             currentChatContact = null;
+            lastRenderedChatPartner = null;
             updateContactsDisplay();
         }
 
@@ -1054,6 +1057,7 @@
 
             const localMessagePayload = {
                 id: tempId,
+                _id: tempId,
                 sender: currentUser.phone,
                 recipient: recipientId,
                 isGroup: !!currentChatContact.isGroup,
@@ -1068,9 +1072,10 @@
 
             socket.emit('send_message', msgData, (response) => {
                 if(response && response.success) {
-                    let idx = messages.findIndex(m => m.id === response.tempId);
+                    let idx = messages.findIndex(m => m.id === tempId || m._id === tempId);
                     if(idx !== -1) {
                         messages[idx] = response.message;
+                        messages[idx].id = response.message._id || response.message.id;
                         renderMessages();
                     }
                 }
@@ -1087,10 +1092,10 @@
             return dateObj.toLocaleDateString();
         }
 
+        // Funzione ottimizzata per evitare lag ed evitare il reset completo se non necessario
         function renderMessages() {
             const box = document.getElementById('messages-box');
             if(!box || !currentChatContact || !currentUser) return;
-            box.innerHTML = '';
 
             const targetId = currentChatContact.isGroup ? currentChatContact._id : currentChatContact.phone;
 
@@ -1104,6 +1109,12 @@
                 }
             });
 
+            if (lastRenderedChatPartner !== targetId) {
+                box.innerHTML = '';
+                lastRenderedChatPartner = targetId;
+            }
+
+            box.innerHTML = '';
             let lastDateStr = '';
 
             chatMessages.forEach(msg => {
@@ -1154,9 +1165,9 @@
 
                 footer.innerHTML = `<span>${timeStr}</span>${ticksHtml}`;
                 bubble.appendChild(footer);
-
                 box.appendChild(bubble);
             });
+            
             box.scrollTop = box.scrollHeight;
         }
 
@@ -1178,7 +1189,7 @@
             activeCallType = callType;
             activeCallIsGroup = isGroup;
             activeCallTargets = targets;
-            callParticipantsCount = 1; // Chi chiama è il primo partecipante
+            callParticipantsCount = 1;
 
             document.getElementById('call-partner-label').innerText = isGroup ? "Chiamata di Gruppo" : `A: ${getDisplayName(targets[0])}`;
             document.getElementById('call-status-text').innerText = "In attesa di risposta...";
@@ -1310,7 +1321,6 @@
             }
         });
 
-        // Gestione punti 3 e 4: Chiusura automatica se si rimane in 1
         socket.on('call_participant_left', (data) => {
             let wrap = document.getElementById('wrap_remote_video_' + data.userPhone);
             if(wrap) wrap.remove();
