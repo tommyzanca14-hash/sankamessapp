@@ -80,6 +80,7 @@
         .call-log-item:hover { background: #f8f9fa; }
         .call-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; background: #28a745; }
         .call-dot.declined { background: #dc3545; }
+        .call-dot.pending { background: #ffc107; }
 
         #notification-banner {
             position: fixed; top: -60px; left: 50%; transform: translateX(-50%);
@@ -288,7 +289,7 @@
         let callLogs = [];
         let currentChatContact = null;
         let isAlphabetical = false;
-        let readTimer = null; // Funzione 1: ritardo spunte blu
+        let readTimer = null;
 
         let peerConnections = {}; 
         let localStream = null;
@@ -420,13 +421,12 @@
                     playNotificationSound();
                     showNotificationBanner(`Nuovo messaggio ricevuto`);
                     
-                    // Funzione 1: Ritardo spunte blu se la chat è già aperta
                     if(currentChatContact && !currentChatContact.isGroup && currentChatContact.phone === msg.sender) {
                         if(readTimer) clearTimeout(readTimer);
                         readTimer = setTimeout(() => {
                             msg.status = 'read';
                             socket.emit('mark_messages_read', { userPhone: currentUser.phone, chatPartnerId: msg.sender, isGroup: false });
-                        }, 1500);
+                        }, 1000);
                     }
                 }
             }
@@ -859,12 +859,11 @@
                 isGroup: !!chatObj.isGroup
             });
 
-            // Funzione 1: Ritardo spunte blu di 1,5 secondi all'apertura della chat
             if(!chatObj.isGroup) {
                 if(readTimer) clearTimeout(readTimer);
                 readTimer = setTimeout(() => {
                     socket.emit('mark_messages_read', { userPhone: currentUser.phone, chatPartnerId: chatObj.phone, isGroup: false });
-                }, 1500);
+                }, 800);
             }
 
             renderMessages();
@@ -1190,7 +1189,6 @@
             }, 1000);
         }
 
-        // Funzione 2: Chiusura automatica della chiamata per entrambi
         function endCall() {
             socket.emit('end_call_for_all', { callId: activeCallId, targets: activeCallTargets });
             closeCallWindow();
@@ -1242,8 +1240,9 @@
                 }
 
                 let isDeclined = log.status === 'declined';
-                let statusText = isDeclined ? 'Rifiutata' : 'Svolta';
-                let dotClass = isDeclined ? 'call-dot declined' : 'call-dot';
+                let isPending = log.status === 'pending';
+                let statusText = isDeclined ? 'Rifiutata' : (isPending ? 'Non risposta / Mancata' : 'Svolta');
+                let dotClass = isDeclined ? 'call-dot declined' : (isPending ? 'call-dot pending' : 'call-dot');
 
                 const div = document.createElement('div');
                 div.className = 'call-log-item';
