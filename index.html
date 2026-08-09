@@ -350,6 +350,14 @@
             }
         };
 
+        // Gestione cambio stato visibilità scheda (se l'utente lascia la scheda aperta ma passa ad un'altra app/scheda)
+        document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === 'hidden' && activeCallId) {
+                // Se c'è una chiamata attiva e l'utente nasconde la scheda, chiudiamo la chiamata per evitare blocchi
+                endCall();
+            }
+        });
+
         socket.on('registration_success', (userData) => {
             currentUser = userData;
             localStorage.setItem('omega7_user', JSON.stringify(userData));
@@ -520,7 +528,7 @@
             activeCallId = data.callId;
             activeCallType = data.callType;
             activeCallIsGroup = data.isGroup;
-            activeCallTargets = data.targets || [];
+            activeCallTargets = data.targets || [data.initiatorPhone];
 
             playNotificationSound();
             showNotificationBanner(`Chiamata in arrivo da ${data.initiatorName}`);
