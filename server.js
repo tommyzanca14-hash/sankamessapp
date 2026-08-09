@@ -61,7 +61,7 @@ const callLogSchema = new mongoose.Schema({
     initiatorPhone: String,
     initiatorName: String,
     participants: [{ phone: String, name: String }],
-    status: { type: String, default: 'pending' }, // pending, completed, declined, missed
+    status: { type: String, default: 'pending' }, // pending, completed, declined, missed, unreachable
     timestamp: { type: Date, default: Date.now }
 });
 const CallLog = mongoose.model('CallLog', callLogSchema);
@@ -332,10 +332,45 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- GESTIONE CHIAMATE WEBRTC ---
+    // --- GESTIONE CHIAMATE WEBRTC & STATO UTENTE ---
+    socket.on('check_user_availability', async (data, callback) => {
+        const targetPhone = data.targetPhone;
+        const targetSocketId = activeUsers.get(targetPhone);
+        const isOnline = targetSocketId && io.sockets.sockets.has(targetSocketId);
+        if (typeof callback === 'function') {
+            callback({ online: isOnline });
+        }
+    });
+
     socket.on('start_call', async (data) => {
         try {
             let participantsList = [{ phone: data.initiatorPhone, name: data.initiatorName }];
+            let validTargets = [];
+
+            if (data.targets && data.targets.length > 0) {
+                for (let targetPhone of data.targets) {
+                    const targetSocketId = activeUsers.get(targetPhone);
+                    const isOnline = targetSocketId && io.sockets.sockets.has(targetSocketId);
+                    if (isOnline) {
+                        validTargets.push(targetPhone);
+                    }
+                }
+            }
+
+            // Se nessun target è online, segna subito la chiamata come non raggiungibile/missed
+            if (!data.isGroup && validTargets.length === 0 && data.targets && data.targets.length > 0) {
+                const callLog = new CallLog({
+                    callType: data.callType,
+                    isGroup: false,
+                    initiatorPhone: data.initiatorPhone,
+                    initiatorName: data.initiatorName,
+                    participants: participantsList,
+                    status: 'unreachable'
+                });
+                await callLog.save();
+                socket.emit('call_unreachable', { message: 'Utente non raggiungibile o offline.' });
+                return;
+            }
 
             if (data.targets && data.targets.length > 0) {
                 const targetUsers = await User.find({ phone: { $in: data.targets } });
@@ -356,22 +391,20 @@ io.on('connection', (socket) => {
             });
             await callLog.save();
 
-            if (data.targets && data.targets.length > 0) {
-                data.targets.forEach(targetPhone => {
-                    const targetSocketId = activeUsers.get(targetPhone);
-                    if (targetSocketId && io.sockets.sockets.has(targetSocketId)) {
-                        io.to(targetSocketId).emit('incoming_call', {
-                            callId: callLog._id,
-                            initiatorPhone: data.initiatorPhone,
-                            initiatorName: data.initiatorName,
-                            callType: data.callType,
-                            isGroup: data.isGroup,
-                            groupId: data.groupId,
-                            targets: data.targets
-                        });
-                    }
-                });
-            }
+            validTargets.forEach(targetPhone => {
+                const targetSocketId = activeUsers.get(targetPhone);
+                if (targetSocketId && io.sockets.sockets.has(targetSocketId)) {
+                    io.to(targetSocketId).emit('incoming_call', {
+                        callId: callLog._id,
+                        initiatorPhone: data.initiatorPhone,
+                        initiatorName: data.initiatorName,
+                        callType: data.callType,
+                        isGroup: data.isGroup,
+                        groupId: data.groupId,
+                        targets: data.targets
+                    });
+                }
+            });
 
             socket.emit('call_initiated', { callId: callLog._id });
         } catch (err) {
@@ -403,7 +436,7 @@ io.on('connection', (socket) => {
     socket.on('call_signal', (data) => {
         const recipientSocketId = activeUsers.get(data.toIdentifier);
         if (recipientSocketId && io.sockets.sockets.has(recipientSocketId)) {
-            io.to(recipientSocketId).emit('call_signal', {
+                    io.to(recipientSocketId).emit('call_signal', {
                 fromPhone: data.fromPhone,
                 signal: data.signal
             });
