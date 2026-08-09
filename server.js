@@ -66,10 +66,34 @@ const callLogSchema = new mongoose.Schema({
 });
 const CallLog = mongoose.model('CallLog', callLogSchema);
 
-const activeUsers = new Map(); // phone -> Set di socket.id (supporta connessioni multiple o cambio schermata)
+const activeUsers = new Map(); // phone -> Set di socket.id
 
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
+
+    // Funzione unificata di gestione sessione e messaggi pendenti
+    const handleUserSession = async (user, socket) => {
+        if (!activeUsers.has(user.phone)) {
+            activeUsers.set(user.phone, new Set());
+        }
+        activeUsers.get(user.phone).add(socket.id);
+        socket.userPhone = user.phone;
+
+        // Invia messaggi pendenti non letti
+        const pending = await Message.find({ recipient: user.phone, status: 'sent', isGroup: false });
+        for (let msg of pending) {
+            msg.status = 'delivered';
+            await msg.save();
+            socket.emit('receive_message', msg);
+            
+            const senderSockets = activeUsers.get(msg.sender);
+            if (senderSockets && senderSockets.size > 0) {
+                senderSockets.forEach(sId => {
+                    io.to(sId).emit('message_status_update', { messageId: msg._id, status: 'delivered' });
+                });
+            }
+        }
+    };
 
     socket.on('register_user', async (data) => {
         try {
@@ -92,29 +116,8 @@ io.on('connection', (socket) => {
                 await user.save();
             }
 
-            if (!activeUsers.has(user.phone)) {
-                activeUsers.set(user.phone, new Set());
-            }
-            activeUsers.get(user.phone).add(socket.id);
-            socket.userPhone = user.phone;
-
+            await handleUserSession(user, socket);
             socket.emit('registration_success', user);
-
-            const pending = await Message.find({ recipient: user.phone, status: 'sent', isGroup: false });
-            for (let msg of pending) {
-                msg.status = 'delivered';
-                await msg.save();
-                socket.emit('receive_message', msg);
-                
-                const senderSockets = activeUsers.get(msg.sender);
-                if (senderSockets) {
-                    senderSockets.forEach(sId => {
-                        if (io.sockets.sockets.has(sId)) {
-                            io.to(sId).emit('message_status_update', { messageId: msg._id, status: 'delivered' });
-                        }
-                    });
-                }
-            }
         } catch (err) {
             console.error("Errore registrazione:", err);
             socket.emit('registration_error', 'Errore del server o numero già registrato.');
@@ -126,32 +129,11 @@ io.on('connection', (socket) => {
             if (!data || !data.phone) return;
             let user = await User.findOne({ phone: data.phone.trim() });
             if (user) {
-                if (!activeUsers.has(user.phone)) {
-                    activeUsers.set(user.phone, new Set());
-                }
-                activeUsers.get(user.phone).add(socket.id);
-                socket.userPhone = user.phone;
-
+                await handleUserSession(user, socket);
                 socket.emit('login_success', user);
 
                 const userGroups = await Group.find({ members: user.phone });
                 userGroups.forEach(g => socket.join(g._id.toString()));
-
-                const pending = await Message.find({ recipient: user.phone, status: 'sent', isGroup: false });
-                for (let msg of pending) {
-                    msg.status = 'delivered';
-                    await msg.save();
-                    socket.emit('receive_message', msg);
-
-                    const senderSockets = activeUsers.get(msg.sender);
-                    if (senderSockets) {
-                        senderSockets.forEach(sId => {
-                            if (io.sockets.sockets.has(sId)) {
-                                io.to(sId).emit('message_status_update', { messageId: msg._id, status: 'delivered' });
-                            }
-                        });
-                    }
-                }
             } else {
                 socket.emit('registration_error', 'Utente non trovato.');
             }
@@ -219,10 +201,8 @@ io.on('connection', (socket) => {
                 const sSockets = activeUsers.get(phone);
                 if (sSockets) {
                     sSockets.forEach(sId => {
-                        if (io.sockets.sockets.has(sId)) {
-                            const targetSocket = io.sockets.sockets.get(sId);
-                            if (targetSocket) targetSocket.join(newGroup._id.toString());
-                        }
+                        const targetSocket = io.sockets.sockets.get(sId);
+                        if (targetSocket) targetSocket.join(newGroup._id.toString());
                     });
                 }
             });
@@ -249,17 +229,13 @@ io.on('connection', (socket) => {
         try {
             const { sender, recipient, text, isGroup, tempId } = msgData;
 
-            // Generiamo un ID univoco immediato per il payload
             const messageId = new mongoose.Types.ObjectId();
             const timestamp = new Date();
-            let initialStatus = isGroup ? 'delivered' : 'sent';
-
+            
             const recipientSockets = !isGroup ? activeUsers.get(recipient) : null;
-            const isOnline = !isGroup && recipientSockets && Array.from(recipientSockets).some(sId => io.sockets.sockets.has(sId));
+            const isOnline = !isGroup && recipientSockets && recipientSockets.size > 0;
 
-            if (isOnline) {
-                initialStatus = 'delivered';
-            }
+            let initialStatus = (isGroup || isOnline) ? 'delivered' : 'sent';
 
             const messagePayload = {
                 id: messageId,
@@ -271,23 +247,21 @@ io.on('connection', (socket) => {
                 timestamp: timestamp
             };
 
-            // 1. Invio IMMEDIATO via WebSocket al destinatario o al gruppo
+            // 1. Inoltro immediato via WebSocket
             if (isGroup) {
                 io.to(recipient).emit('receive_message', messagePayload);
             } else if (isOnline) {
                 recipientSockets.forEach(sId => {
-                    if (io.sockets.sockets.has(sId)) {
-                        io.to(sId).emit('receive_message', messagePayload);
-                    }
+                    io.to(sId).emit('receive_message', messagePayload);
                 });
             }
 
-            // 2. Risposta immediata al mittente senza attendere MongoDB
+            // 2. Risposta immediata al mittente
             if (typeof callback === 'function') {
                 callback({ success: true, message: messagePayload, tempId });
             }
 
-            // 3. Salvataggio asincrono su MongoDB Atlas in background
+            // 3. Salvataggio asincrono su MongoDB
             const newMessage = new Message({
                 _id: messageId,
                 sender,
@@ -314,11 +288,9 @@ io.on('connection', (socket) => {
 
             if (!isGroup) {
                 const senderSockets = activeUsers.get(chatPartnerId);
-                if (senderSockets) {
+                if (senderSockets && senderSockets.size > 0) {
                     senderSockets.forEach(sId => {
-                        if (io.sockets.sockets.has(sId)) {
-                            io.to(sId).emit('messages_read_receipt', { readerPhone: userPhone });
-                        }
+                        io.to(sId).emit('messages_read_receipt', { readerPhone: userPhone });
                     });
                 }
             }
@@ -370,11 +342,11 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- GESTIONE CHIAMATE WEBRTC & STATO UTENTE OTTIMIZZATA ---
+    // --- GESTIONE CHIAMATE WEBRTC ---
     socket.on('check_user_availability', async (data, callback) => {
         const targetPhone = data.targetPhone;
         const targetSockets = activeUsers.get(targetPhone);
-        const isOnline = targetSockets && Array.from(targetSockets).some(sId => io.sockets.sockets.has(sId));
+        const isOnline = targetSockets && targetSockets.size > 0;
         if (typeof callback === 'function') {
             callback({ online: !!isOnline });
         }
@@ -388,7 +360,7 @@ io.on('connection', (socket) => {
             if (data.targets && data.targets.length > 0) {
                 for (let targetPhone of data.targets) {
                     const targetSockets = activeUsers.get(targetPhone);
-                    const isOnline = targetSockets && Array.from(targetSockets).some(sId => io.sockets.sockets.has(sId));
+                    const isOnline = targetSockets && targetSockets.size > 0;
                     if (isOnline) {
                         validTargets.push(targetPhone);
                     }
@@ -432,17 +404,15 @@ io.on('connection', (socket) => {
                 const targetSockets = activeUsers.get(targetPhone);
                 if (targetSockets) {
                     targetSockets.forEach(sId => {
-                        if (io.sockets.sockets.has(sId)) {
-                            io.to(sId).emit('incoming_call', {
-                                callId: callLog._id,
-                                initiatorPhone: data.initiatorPhone,
-                                initiatorName: data.initiatorName,
-                                callType: data.callType,
-                                isGroup: data.isGroup,
-                                groupId: data.groupId,
-                                targets: data.targets
-                            });
-                        }
+                        io.to(sId).emit('incoming_call', {
+                            callId: callLog._id,
+                            initiatorPhone: data.initiatorPhone,
+                            initiatorName: data.initiatorName,
+                            callType: data.callType,
+                            isGroup: data.isGroup,
+                            groupId: data.groupId,
+                            targets: data.targets
+                        });
                     });
                 }
             });
@@ -473,12 +443,10 @@ io.on('connection', (socket) => {
                 const recipientSockets = activeUsers.get(data.toIdentifier);
                 if (recipientSockets) {
                     recipientSockets.forEach(sId => {
-                        if (io.sockets.sockets.has(sId)) {
-                            io.to(sId).emit('call_signal', {
-                                fromPhone: data.userPhone,
-                                signal: data.signal
-                            });
-                        }
+                        io.to(sId).emit('call_signal', {
+                            fromPhone: data.userPhone,
+                            signal: data.signal
+                        });
                     });
                 }
             }
@@ -491,12 +459,10 @@ io.on('connection', (socket) => {
         const recipientSockets = activeUsers.get(data.toIdentifier);
         if (recipientSockets) {
             recipientSockets.forEach(sId => {
-                if (io.sockets.sockets.has(sId)) {
-                    io.to(sId).emit('call_signal', {
-                        fromPhone: data.fromPhone,
-                        signal: data.signal
-                    });
-                }
+                io.to(sId).emit('call_signal', {
+                    fromPhone: data.fromPhone,
+                    signal: data.signal
+                });
             });
         }
     });
@@ -509,9 +475,7 @@ io.on('connection', (socket) => {
             const recipientSockets = activeUsers.get(data.toIdentifier);
             if (recipientSockets) {
                 recipientSockets.forEach(sId => {
-                    if (io.sockets.sockets.has(sId)) {
-                        io.to(sId).emit('call_declined', { fromPhone: data.fromPhone, userName: data.userName });
-                    }
+                    io.to(sId).emit('call_declined', { fromPhone: data.fromPhone, userName: data.userName });
                 });
             }
         }
@@ -532,7 +496,7 @@ io.on('connection', (socket) => {
                 const sSockets = activeUsers.get(phone);
                 if (sSockets) {
                     sSockets.forEach(sId => {
-                        if (io.sockets.sockets.has(sId)) io.to(sId).emit('call_ended');
+                        io.to(sId).emit('call_ended');
                     });
                 }
             });
