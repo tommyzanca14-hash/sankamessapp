@@ -92,7 +92,6 @@ io.on('connection', (socket) => {
                 await user.save();
             }
 
-            // PUNTO 2: Gestione corretta stato online con multi-socket per lo stesso utente
             if (!activeUsers.has(user.phone)) {
                 activeUsers.set(user.phone, new Set());
             }
@@ -250,47 +249,56 @@ io.on('connection', (socket) => {
         try {
             const { sender, recipient, text, isGroup, tempId } = msgData;
 
+            // Generiamo un ID univoco immediato per il payload
+            const messageId = new mongoose.Types.ObjectId();
+            const timestamp = new Date();
+            let initialStatus = isGroup ? 'delivered' : 'sent';
+
+            const recipientSockets = !isGroup ? activeUsers.get(recipient) : null;
+            const isOnline = !isGroup && recipientSockets && Array.from(recipientSockets).some(sId => io.sockets.sockets.has(sId));
+
+            if (isOnline) {
+                initialStatus = 'delivered';
+            }
+
+            const messagePayload = {
+                id: messageId,
+                sender: sender,
+                recipient: recipient,
+                isGroup: !!isGroup,
+                text: text,
+                status: initialStatus,
+                timestamp: timestamp
+            };
+
+            // 1. Invio IMMEDIATO via WebSocket al destinatario o al gruppo
+            if (isGroup) {
+                io.to(recipient).emit('receive_message', messagePayload);
+            } else if (isOnline) {
+                recipientSockets.forEach(sId => {
+                    if (io.sockets.sockets.has(sId)) {
+                        io.to(sId).emit('receive_message', messagePayload);
+                    }
+                });
+            }
+
+            // 2. Risposta immediata al mittente senza attendere MongoDB
+            if (typeof callback === 'function') {
+                callback({ success: true, message: messagePayload, tempId });
+            }
+
+            // 3. Salvataggio asincrono su MongoDB Atlas in background
             const newMessage = new Message({
+                _id: messageId,
                 sender,
                 recipient,
                 isGroup: !!isGroup,
                 text,
-                status: isGroup ? 'delivered' : 'sent'
+                status: initialStatus,
+                timestamp
             });
-
             await newMessage.save();
 
-            const messagePayload = {
-                id: newMessage._id,
-                sender: newMessage.sender,
-                recipient: newMessage.recipient,
-                isGroup: newMessage.isGroup,
-                text: newMessage.text,
-                status: newMessage.status,
-                timestamp: newMessage.timestamp
-            };
-
-            if (isGroup) {
-                io.to(recipient).emit('receive_message', messagePayload);
-            } else {
-                let recipientSockets = activeUsers.get(recipient);
-                let isOnline = recipientSockets && Array.from(recipientSockets).some(sId => io.sockets.sockets.has(sId));
-                
-                if (isOnline) {
-                    newMessage.status = 'delivered';
-                    await newMessage.save();
-                    messagePayload.status = 'delivered';
-                    recipientSockets.forEach(sId => {
-                        if (io.sockets.sockets.has(sId)) {
-                            io.to(sId).emit('receive_message', messagePayload);
-                        }
-                    });
-                }
-            }
-
-            if (typeof callback === 'function') {
-                callback({ success: true, message: messagePayload, tempId });
-            }
         } catch (err) {
             console.error("Errore invio messaggio:", err);
             if (typeof callback === 'function') callback({ success: false });
@@ -372,7 +380,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // PUNTO 3 & 4: Avvio chiamata con verifica che almeno 1 utente sia online e risponda
     socket.on('start_call', async (data) => {
         try {
             let participantsList = [{ phone: data.initiatorPhone, name: data.initiatorName }];
