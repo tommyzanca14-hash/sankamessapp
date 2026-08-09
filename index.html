@@ -46,11 +46,15 @@
         .active-chat-header { background: #6c757d; color: white; display: flex; align-items: center; justify-content: space-between; padding: 12px 15px; font-weight: bold; font-size: 16px; flex-shrink: 0; }
         .active-chat-messages { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; background: #eef9f0; }
         
+        .date-divider { text-align: center; margin: 10px 0; font-size: 12px; font-weight: bold; color: #6c757d; background: #e2e8f0; padding: 4px 10px; border-radius: 12px; align-self: center; }
+
         .message-bubble { max-width: 75%; padding: 10px 14px; border-radius: 10px; font-size: 14px; word-wrap: break-word; display: flex; flex-direction: column; gap: 4px; font-weight: normal; user-select: none; }
         .message-bubble.sent { background: #d4edda; align-self: flex-end; color: #155724; }
         .message-bubble.received { background: white; align-self: flex-start; color: #212529; }
         .message-sender-name { font-size: 12px; font-weight: bold; color: #007bff; margin-bottom: 2px; }
         .message-footer { display: flex; justify-content: flex-end; align-items: center; gap: 4px; font-size: 11px; }
+        .message-ticks { font-size: 12px; font-weight: bold; letter-spacing: -2px; color: #6c757d; }
+        .message-ticks.read { color: #0dcaf0; }
         
         .active-chat-input { background: #f8f9fa; display: flex; padding: 10px; gap: 10px; flex-shrink: 0; border-top: 1px solid #dee2e6; align-items: center; }
         .active-chat-input input { flex: 1; padding: 10px 15px; border: 1px solid #ced4da; border-radius: 20px; outline: none; font-size: 16px; background: white; font-weight: normal; }
@@ -414,17 +418,38 @@
                 if (!isFromMe) {
                     playNotificationSound();
                     showNotificationBanner(`Nuovo messaggio ricevuto`);
+                    
+                    if(currentChatContact && !currentChatContact.isGroup && currentChatContact.phone === msg.sender) {
+                        msg.status = 'read';
+                        socket.emit('mark_messages_read', { userPhone: currentUser.phone, chatPartnerId: msg.sender, isGroup: false });
+                    }
                 }
             }
 
             updateContactsDisplay();
-            
             if(currentChatContact) {
                 const targetId = currentChatContact.isGroup ? currentChatContact._id : currentChatContact.phone;
                 if(msg.recipient === targetId || msg.sender === targetId) {
                     renderMessages();
                 }
             }
+        });
+
+        socket.on('message_status_update', (data) => {
+            let m = messages.find(item => item.id === data.messageId || (item._id && item._id.toString() === data.messageId.toString()));
+            if(m) {
+                m.status = data.status;
+                if(currentChatContact) renderMessages();
+            }
+        });
+
+        socket.on('messages_read_receipt', (data) => {
+            messages.forEach(m => {
+                if(m.sender === currentUser.phone && m.recipient === data.readerPhone && !m.isGroup) {
+                    m.status = 'read';
+                }
+            });
+            if(currentChatContact) renderMessages();
         });
 
         socket.on('all_chats_history', (history) => {
@@ -576,14 +601,15 @@
             });
         }
 
-        function getDisplayName(phone) {
-            if(!currentUser) return phone;
-            if(phone === currentUser.phone) return "Tu";
-
+        function getContactDetails(phone) {
+            if(!currentUser || phone === currentUser.phone) return { name: "Tu", realName: currentUser?.name, email: currentUser?.email };
             let saved = contacts.find(c => c.phone === phone);
-            if(saved) return saved.name;
+            if(saved) return saved;
+            return { name: "~" + phone, realName: phone, email: 'N/D', phone: phone };
+        }
 
-            return "~" + phone;
+        function getDisplayName(phone) {
+            return getContactDetails(phone).name;
         }
 
         function openCreateGroupModal() {
@@ -720,8 +746,7 @@
                     id: g._id,
                     name: g.name,
                     description: g.description,
-                    members: g.members,
-                    unreadCount: 0
+                    members: g.members
                 });
             });
 
@@ -732,8 +757,7 @@
                     phone: c.phone, 
                     email: c.email || 'N/D',
                     realName: c.realName, 
-                    isSaved: true,
-                    unreadCount: 0
+                    isSaved: true 
                 });
             });
 
@@ -744,14 +768,14 @@
                     if(other && other !== currentUser.phone) {
                         let entry = activeMap.get(other);
                         if(!entry) {
+                            let looked = getContactDetails(other);
                             entry = { 
                                 isGroup: false,
-                                name: "~" + other, 
+                                name: looked.name, 
                                 phone: other, 
-                                email: 'N/D',
-                                realName: other, 
-                                isSaved: false,
-                                unreadCount: 0
+                                email: looked.email || 'N/D',
+                                realName: looked.realName || other, 
+                                isSaved: !!looked.isSaved
                             };
                             activeMap.set(other, entry);
                         }
@@ -830,16 +854,21 @@
                 isGroup: !!chatObj.isGroup
             });
 
+            if(!chatObj.isGroup) {
+                socket.emit('mark_messages_read', { userPhone: currentUser.phone, chatPartnerId: chatObj.phone, isGroup: false });
+            }
+
             renderMessages();
             document.getElementById('active-chat-window').style.display = 'flex';
         }
 
         function openContactInfoModal() {
             if(!currentChatContact || currentChatContact.isGroup) return;
-            document.getElementById('modal-contact-nickname').innerText = currentChatContact.name || 'Non salvato';
-            document.getElementById('modal-contact-username').innerText = currentChatContact.realName || currentChatContact.name;
-            document.getElementById('modal-contact-phone').innerText = currentChatContact.phone;
-            document.getElementById('modal-contact-email').innerText = currentChatContact.email || 'N/D';
+            let details = getContactDetails(currentChatContact.phone);
+            document.getElementById('modal-contact-nickname').innerText = details.name || 'Non salvato';
+            document.getElementById('modal-contact-username').innerText = details.realName || details.name;
+            document.getElementById('modal-contact-phone').innerText = details.phone;
+            document.getElementById('modal-contact-email').innerText = details.email || 'N/D';
             document.getElementById('contact-info-modal').style.display = 'flex';
         }
 
@@ -847,11 +876,12 @@
             let customName = prompt("Inserisci il nome in rubrica per:", currentChatContact.phone);
             if(!customName) return;
 
+            let details = getContactDetails(currentChatContact.phone);
             contacts.push({ 
                 name: customName, 
                 phone: currentChatContact.phone, 
-                email: currentChatContact.email || 'N/D',
-                realName: currentChatContact.realName || currentChatContact.phone,
+                email: details.email || 'N/D',
+                realName: details.realName || currentChatContact.phone,
                 isSaved: true 
             });
 
@@ -910,6 +940,16 @@
             });
         }
 
+        function getDateLabel(dateObj) {
+            const today = new Date();
+            const yesterday = new Date();
+            yesterday.setDate(today.getDate() - 1);
+
+            if(dateObj.toDateString() === today.toDateString()) return "Oggi";
+            if(dateObj.toDateString() === yesterday.toDateString()) return "Ieri";
+            return dateObj.toLocaleDateString();
+        }
+
         function renderMessages() {
             const box = document.getElementById('messages-box');
             box.innerHTML = '';
@@ -927,8 +967,20 @@
                 }
             });
 
+            let lastDateStr = '';
+
             chatMessages.forEach(msg => {
                 const msgDate = new Date(msg.timestamp || Date.now());
+                const dateHeaderStr = getDateLabel(msgDate);
+
+                if(dateHeaderStr !== lastDateStr) {
+                    lastDateStr = dateHeaderStr;
+                    const divider = document.createElement('div');
+                    divider.className = 'date-divider';
+                    divider.innerText = dateHeaderStr;
+                    box.appendChild(divider);
+                }
+
                 const isSent = (msg.sender === currentUser.phone);
                 const bubble = document.createElement('div');
                 bubble.className = 'message-bubble ' + (isSent ? 'sent' : 'received');
@@ -947,7 +999,23 @@
                 let footer = document.createElement('div');
                 footer.className = 'message-footer';
                 let timeStr = msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                footer.innerHTML = `<span>${timeStr}</span>`;
+                
+                let ticksHtml = '';
+                if(isSent) {
+                    if(msg.status === 'local') {
+                        ticksHtml = `<span class="message-ticks"></span>`;
+                    } else if(msg.status === 'sent') {
+                        ticksHtml = `<span class="message-ticks" title="Inviato">✓</span>`;
+                    } else if(msg.status === 'delivered') {
+                        ticksHtml = `<span class="message-ticks" title="Consegnato">✓✓</span>`;
+                    } else if(msg.status === 'read') {
+                        ticksHtml = `<span class="message-ticks read" title="Letto">✓✓</span>`;
+                    } else {
+                        ticksHtml = `<span class="message-ticks">✓</span>`;
+                    }
+                }
+
+                footer.innerHTML = `<span>${timeStr}</span>${ticksHtml}`;
                 bubble.appendChild(footer);
 
                 box.appendChild(bubble);
@@ -1047,7 +1115,8 @@
                 socket.emit('call_declined', {
                     callId: activeCallId,
                     userPhone: currentUser.phone,
-                    userName: currentUser.name
+                    userName: currentUser.name,
+                    toIdentifier: incomingCallPayload ? incomingCallPayload.initiatorPhone : null
                 });
             }
             closeCallWindow();
