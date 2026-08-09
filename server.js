@@ -1,5 +1,5 @@
 const express = require('express');
-const http = require('http');
+const http = http = require('http'); // Riferimento standard http
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -339,7 +339,7 @@ io.on('connection', (socket) => {
                 initiatorPhone: data.initiatorPhone,
                 initiatorName: data.initiatorName,
                 participants: participantsList,
-                status: 'pending' // Stato iniziale corretto per evitare falsi positivi
+                status: 'pending'
             });
             await callLog.save();
 
