@@ -102,7 +102,6 @@ io.on('connection', (socket) => {
                 await msg.save();
                 socket.emit('receive_message', msg);
                 
-                // Notifica mittente dell'avvenuta consegna
                 const senderSocketId = activeUsers.get(msg.sender);
                 if (senderSocketId) {
                     io.to(senderSocketId).emit('message_status_update', { messageId: msg._id, status: 'delivered' });
@@ -410,6 +409,15 @@ io.on('connection', (socket) => {
     });
 
     socket.on('hang_up_call', async (data) => {
+        if (data && data.targets) {
+            data.targets.forEach(phone => {
+                const sId = activeUsers.get(phone);
+                if (sId) io.to(sId).emit('call_ended');
+            });
+        }
+    });
+
+    socket.on('end_call_for_all', (data) => {
         if (data && data.targets) {
             data.targets.forEach(phone => {
                 const sId = activeUsers.get(phone);
