@@ -166,6 +166,20 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Endpoint per recuperare i dettagli completi di un utente (incluso l'email per risolvere il punto 4)
+    socket.on('get_user_details', async (data, callback) => {
+        try {
+            const user = await User.findOne({ phone: data.phone });
+            if (user) {
+                callback({ success: true, user: { name: user.name, phone: user.phone, email: user.email } });
+            } else {
+                callback({ success: false });
+            }
+        } catch (err) {
+            callback({ success: false });
+        }
+    });
+
     socket.on('create_group', async (data, callback) => {
         try {
             const { name, description, members, admin } = data;
@@ -339,7 +353,7 @@ io.on('connection', (socket) => {
                 initiatorPhone: data.initiatorPhone,
                 initiatorName: data.initiatorName,
                 participants: participantsList,
-                status: 'pending'
+                status: 'pending' // Corretto: parte come pending finché non viene stabilita
             });
             await callLog.save();
 
@@ -369,7 +383,7 @@ io.on('connection', (socket) => {
     socket.on('join_call', async (data) => {
         try {
             await CallLog.findByIdAndUpdate(data.callId, {
-                status: 'completed',
+                status: 'completed', // Aggiornato a completed solo quando la chiamata viene effettivamente accettata/stabilita
                 $addToSet: { participants: { phone: data.userPhone, name: data.userName } }
             });
 
