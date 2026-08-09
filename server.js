@@ -95,7 +95,6 @@ io.on('connection', (socket) => {
             socket.userPhone = user.phone;
             socket.emit('registration_success', user);
 
-            // Invia messaggi pendenti privati
             const pending = await Message.find({ recipient: user.phone, status: 'sent', isGroup: false });
             for (let msg of pending) {
                 socket.emit('receive_message', msg);
@@ -117,7 +116,6 @@ io.on('connection', (socket) => {
                 socket.userPhone = user.phone;
                 socket.emit('login_success', user);
 
-                // Unisciti a tutte le stanze dei gruppi di cui fa parte
                 const userGroups = await Group.find({ members: user.phone });
                 userGroups.forEach(g => socket.join(g._id.toString()));
 
@@ -205,7 +203,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- GESTIONE MESSAGGI (Privati e Gruppi) ---
+    // --- GESTIONE MESSAGGI ---
     socket.on('send_message', async (msgData, callback) => {
         try {
             const { sender, recipient, text, isGroup, tempId } = msgData;
@@ -295,7 +293,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- GESTIONE CHIAMATE (Persistenti e Visibili per Tutti i Partecipanti) ---
+    // --- GESTIONE CHIAMATE ---
     socket.on('start_call', async (data) => {
         try {
             let participantsList = [{ phone: data.initiatorPhone, name: data.initiatorName }];
@@ -390,7 +388,6 @@ io.on('connection', (socket) => {
 
     // AGGIUNTA: Gestione del rifiuto della chiamata
     socket.on('call_declined', (data) => {
-        // data: { targetPhone } oppure inviato a chi ha avviato la chiamata
         if (data && data.toIdentifier) {
             const recipientSocketId = activeUsers.get(data.toIdentifier);
             if (recipientSocketId) {
