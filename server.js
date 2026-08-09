@@ -165,7 +165,6 @@ io.on('connection', (socket) => {
                 return callback({ success: false, message: "Dati gruppo non validi." });
             }
 
-            // Aggiungi l'admin ai membri se non è già incluso
             if (!members.includes(admin)) {
                 members.push(admin);
             }
@@ -179,7 +178,6 @@ io.on('connection', (socket) => {
 
             await newGroup.save();
 
-            // Fai unire tutti i membri online alla stanza socket del gruppo
             members.forEach(phone => {
                 const sId = activeUsers.get(phone);
                 if (sId) {
@@ -188,7 +186,6 @@ io.on('connection', (socket) => {
                 }
             });
 
-            // Notifica i membri del nuovo gruppo
             io.to(newGroup._id.toString()).emit('group_created', newGroup);
 
             callback({ success: true, group: newGroup });
@@ -201,7 +198,6 @@ io.on('connection', (socket) => {
     socket.on('get_user_groups', async (data) => {
         try {
             const groups = await Group.find({ members: data.userPhone });
-            // Fai unire preventivamente il socket alle stanze
             groups.forEach(g => socket.join(g._id.toString()));
             socket.emit('user_groups_list', groups);
         } catch (err) {
@@ -235,7 +231,6 @@ io.on('connection', (socket) => {
             };
 
             if (isGroup) {
-                // Invia a tutti i membri nella stanza del gruppo (tranne eventualmente chi invia se gestito dal client)
                 io.to(recipient).emit('receive_message', messagePayload);
             } else {
                 let recipientSocketId = activeUsers.get(recipient);
@@ -300,34 +295,54 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- GESTIONE CHIAMATE (Singole, Gruppo e Multi-utente) ---
+    // --- GESTIONE CHIAMATE (Persistenti e Visibili per Tutti i Partecipanti) ---
     socket.on('start_call', async (data) => {
         // data: { initiatorPhone, initiatorName, targets: [phone1, phone2...], callType, isGroup, groupId }
         try {
+            // Raccogliamo i dati di tutti i partecipanti (chi chiama + target) per salvarli permanentemente nel registro
+            let participantsList = [{ phone: data.initiatorPhone, name: data.initiatorName }];
+
+            if (data.targets && data.targets.length > 0) {
+                const targetUsers = await User.find({ phone: { $in: data.targets } });
+                targetUsers.forEach(t => {
+                    if (!participantsList.some(p => p.phone === t.phone)) {
+                        participantsList.push({ phone: t.phone, name: t.name });
+                    }
+                });
+                // Gestione di fallback se un target non è presente nel database
+                data.targets.forEach(targetPhone => {
+                    if (!participantsList.some(p => p.phone === targetPhone)) {
+                        participantsList.push({ phone: targetPhone, name: targetPhone });
+                    }
+                });
+            }
+
             const callLog = new CallLog({
                 callType: data.callType,
                 isGroup: data.isGroup,
                 initiatorPhone: data.initiatorPhone,
                 initiatorName: data.initiatorName,
-                participants: [{ phone: data.initiatorPhone, name: data.initiatorName }]
+                participants: participantsList
             });
             await callLog.save();
 
-            // Invia evento di chiamata in arrivo a tutti i target specificati o ai membri del gruppo
-            data.targets.forEach(targetPhone => {
-                const targetSocketId = activeUsers.get(targetPhone);
-                if (targetSocketId && io.sockets.sockets.has(targetSocketId)) {
-                    io.to(targetSocketId).emit('incoming_call', {
-                        callId: callLog._id,
-                        initiatorPhone: data.initiatorPhone,
-                        initiatorName: data.initiatorName,
-                        callType: data.callType,
-                        isGroup: data.isGroup,
-                        groupId: data.groupId,
-                        targets: data.targets
-                    });
-                }
-            });
+            // Invia evento di chiamata in arrivo a tutti i target specificati
+            if (data.targets && data.targets.length > 0) {
+                data.targets.forEach(targetPhone => {
+                    const targetSocketId = activeUsers.get(targetPhone);
+                    if (targetSocketId && io.sockets.sockets.has(targetSocketId)) {
+                        io.to(targetSocketId).emit('incoming_call', {
+                            callId: callLog._id,
+                            initiatorPhone: data.initiatorPhone,
+                            initiatorName: data.initiatorName,
+                            callType: data.callType,
+                            isGroup: data.isGroup,
+                            groupId: data.groupId,
+                            targets: data.targets
+                        });
+                    }
+                });
+            }
 
             // Opzionalmente inserisci un messaggio di sistema in chat che avvisa della chiamata
             if (data.isGroup && data.groupId) {
@@ -352,7 +367,7 @@ io.on('connection', (socket) => {
         // data: { callId, userPhone, userName, targetSocketId/signal }
         try {
             await CallLog.findByIdAndUpdate(data.callId, {
-                $push: { participants: { phone: data.userPhone, name: data.userName } }
+                $addToSet: { participants: { phone: data.userPhone, name: data.userName } }
             });
 
             if (data.toIdentifier) {
