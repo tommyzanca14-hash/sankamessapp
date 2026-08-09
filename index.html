@@ -539,6 +539,11 @@
             if (data && data.callId) activeCallId = data.callId;
         });
 
+        socket.on('call_unreachable', (data) => {
+            showNotificationBanner(data.message || "Utente non raggiungibile.");
+            closeCallWindow();
+        });
+
         socket.on('call_signal', async (data) => {
             let pc = peerConnections[data.fromPhone];
             if(!pc) {
@@ -1201,8 +1206,11 @@
             const pc = new RTCPeerConnection(rtcConfig);
             peerConnections[remotePhone] = pc;
 
+            // FONDAMENTALE PER LA BILATERALITÀ: Inserisce le tracce audio/video locali prima di scambiare i segnali
             if(localStream) {
-                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+                localStream.getTracks().forEach(track => {
+                    pc.addTrack(track, localStream);
+                });
             }
 
             pc.onicecandidate = (event) => {
@@ -1310,8 +1318,10 @@
 
                 let isDeclined = log.status === 'declined';
                 let isPending = log.status === 'pending';
-                let statusText = isDeclined ? 'Rifiutata' : (isPending ? 'Non risposta / Mancata' : 'Svolta');
-                let dotClass = isDeclined ? 'call-dot declined' : (isPending ? 'call-dot pending' : 'call-dot');
+                let isUnreachable = log.status === 'unreachable';
+                
+                let statusText = isDeclined ? 'Rifiutata' : (isPending || isUnreachable ? 'Non risposta / Non raggiungibile' : 'Svolta');
+                let dotClass = isDeclined || isUnreachable ? 'call-dot declined' : (isPending ? 'call-dot pending' : 'call-dot');
 
                 const div = document.createElement('div');
                 div.className = 'call-log-item';
