@@ -288,6 +288,7 @@
         let callLogs = [];
         let currentChatContact = null;
         let isAlphabetical = false;
+        let readTimer = null; // Funzione 1: ritardo spunte blu
 
         let peerConnections = {}; 
         let localStream = null;
@@ -419,9 +420,13 @@
                     playNotificationSound();
                     showNotificationBanner(`Nuovo messaggio ricevuto`);
                     
+                    // Funzione 1: Ritardo spunte blu se la chat è già aperta
                     if(currentChatContact && !currentChatContact.isGroup && currentChatContact.phone === msg.sender) {
-                        msg.status = 'read';
-                        socket.emit('mark_messages_read', { userPhone: currentUser.phone, chatPartnerId: msg.sender, isGroup: false });
+                        if(readTimer) clearTimeout(readTimer);
+                        readTimer = setTimeout(() => {
+                            msg.status = 'read';
+                            socket.emit('mark_messages_read', { userPhone: currentUser.phone, chatPartnerId: msg.sender, isGroup: false });
+                        }, 1500);
                     }
                 }
             }
@@ -854,8 +859,12 @@
                 isGroup: !!chatObj.isGroup
             });
 
+            // Funzione 1: Ritardo spunte blu di 1,5 secondi all'apertura della chat
             if(!chatObj.isGroup) {
-                socket.emit('mark_messages_read', { userPhone: currentUser.phone, chatPartnerId: chatObj.phone, isGroup: false });
+                if(readTimer) clearTimeout(readTimer);
+                readTimer = setTimeout(() => {
+                    socket.emit('mark_messages_read', { userPhone: currentUser.phone, chatPartnerId: chatObj.phone, isGroup: false });
+                }, 1500);
             }
 
             renderMessages();
@@ -894,6 +903,7 @@
         }
 
         function closeChat() {
+            if(readTimer) clearTimeout(readTimer);
             document.getElementById('active-chat-window').style.display = 'none';
             currentChatContact = null;
             updateContactsDisplay();
@@ -1180,8 +1190,9 @@
             }, 1000);
         }
 
+        // Funzione 2: Chiusura automatica della chiamata per entrambi
         function endCall() {
-            socket.emit('hang_up_call', { callId: activeCallId, targets: activeCallTargets });
+            socket.emit('end_call_for_all', { callId: activeCallId, targets: activeCallTargets });
             closeCallWindow();
         }
 
