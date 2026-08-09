@@ -8,7 +8,6 @@ const path = require('path');
 const app = express();
 app.use(cors());
 app.use(express.json());
-
 app.use(express.static(path.join(__dirname)));
 
 const server = http.createServer(app);
@@ -20,7 +19,6 @@ const io = new Server(server, {
 });
 
 const MONGO_URI = process.env.MONGO_URI;
-
 if (!MONGO_URI) {
     console.error("ATTENZIONE: La variabile d'ambiente MONGO_URI non è impostata correttamente!");
 }
@@ -31,6 +29,7 @@ mongoose.connect(MONGO_URI || "mongodb://localhost:27017/omega7", {
     .then(() => console.log("Connesso a MongoDB Atlas con successo"))
     .catch(err => console.error("Errore di connessione a MongoDB:", err));
 
+// Modelli Database
 const userSchema = new mongoose.Schema({
     name: { type: String, required: true, trim: true },
     phone: { type: String, required: true, unique: true, trim: true },
@@ -40,14 +39,33 @@ const User = mongoose.model('User', userSchema);
 
 const messageSchema = new mongoose.Schema({
     sender: String,
-    recipient: String,
+    recipient: String, // Può essere il numero di un utente o l'ID di un gruppo
+    isGroup: { type: Boolean, default: false },
     text: String,
     status: { type: String, default: 'sent' },
     timestamp: { type: Date, default: Date.now }
 });
 const Message = mongoose.model('Message', messageSchema);
 
-const activeUsers = new Map();
+const groupSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    description: { type: String, default: '' },
+    admin: { type: String, required: true }, // Telefono del creatore
+    members: [{ type: String }] // Array di numeri di telefono dei membri
+});
+const Group = mongoose.model('Group', groupSchema);
+
+const callLogSchema = new mongoose.Schema({
+    callType: String, // 'audio' o 'video'
+    isGroup: { type: Boolean, default: false },
+    initiatorPhone: String,
+    initiatorName: String,
+    participants: [{ phone: String, name: String }],
+    timestamp: { type: Date, default: Date.now }
+});
+const CallLog = mongoose.model('CallLog', callLogSchema);
+
+const activeUsers = new Map(); // phone -> socket.id
 
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
@@ -65,14 +83,9 @@ io.on('connection', (socket) => {
 
             let user = await User.findOne({ phone: cleanPhone });
             if (!user) {
-                user = new User({
-                    name: cleanName,
-                    phone: cleanPhone,
-                    email: cleanEmail
-                });
+                user = new User({ name: cleanName, phone: cleanPhone, email: cleanEmail });
                 await user.save();
             } else {
-                // Aggiorna i dati se l'utente esiste già ma fa una nuova registrazione pulita
                 user.name = cleanName;
                 user.email = cleanEmail;
                 await user.save();
@@ -82,7 +95,8 @@ io.on('connection', (socket) => {
             socket.userPhone = user.phone;
             socket.emit('registration_success', user);
 
-            const pending = await Message.find({ recipient: user.phone, status: 'sent' });
+            // Invia messaggi pendenti privati
+            const pending = await Message.find({ recipient: user.phone, status: 'sent', isGroup: false });
             for (let msg of pending) {
                 socket.emit('receive_message', msg);
                 msg.status = 'delivered';
@@ -96,14 +110,18 @@ io.on('connection', (socket) => {
 
     socket.on('login_user', async (data) => {
         try {
-            if(!data || !data.phone) return;
+            if (!data || !data.phone) return;
             let user = await User.findOne({ phone: data.phone.trim() });
             if (user) {
                 activeUsers.set(user.phone, socket.id);
                 socket.userPhone = user.phone;
                 socket.emit('login_success', user);
 
-                const pending = await Message.find({ recipient: user.phone, status: 'sent' });
+                // Unisciti a tutte le stanze dei gruppi di cui fa parte
+                const userGroups = await Group.find({ members: user.phone });
+                userGroups.forEach(g => socket.join(g._id.toString()));
+
+                const pending = await Message.find({ recipient: user.phone, status: 'sent', isGroup: false });
                 for (let msg of pending) {
                     socket.emit('receive_message', msg);
                     msg.status = 'delivered';
@@ -139,16 +157,69 @@ io.on('connection', (socket) => {
         }
     });
 
+    // --- GESTIONE GRUPPI ---
+    socket.on('create_group', async (data, callback) => {
+        try {
+            const { name, description, members, admin } = data;
+            if (!name || !members || members.length === 0) {
+                return callback({ success: false, message: "Dati gruppo non validi." });
+            }
+
+            // Aggiungi l'admin ai membri se non è già incluso
+            if (!members.includes(admin)) {
+                members.push(admin);
+            }
+
+            const newGroup = new Group({
+                name: name.trim(),
+                description: description ? description.trim() : '',
+                admin: admin,
+                members: members
+            });
+
+            await newGroup.save();
+
+            // Fai unire tutti i membri online alla stanza socket del gruppo
+            members.forEach(phone => {
+                const sId = activeUsers.get(phone);
+                if (sId) {
+                    const targetSocket = io.sockets.sockets.get(sId);
+                    if (targetSocket) targetSocket.join(newGroup._id.toString());
+                }
+            });
+
+            // Notifica i membri del nuovo gruppo
+            io.to(newGroup._id.toString()).emit('group_created', newGroup);
+
+            callback({ success: true, group: newGroup });
+        } catch (err) {
+            console.error("Errore creazione gruppo:", err);
+            callback({ success: false, message: "Errore interno del server." });
+        }
+    });
+
+    socket.on('get_user_groups', async (data) => {
+        try {
+            const groups = await Group.find({ members: data.userPhone });
+            // Fai unire preventivamente il socket alle stanze
+            groups.forEach(g => socket.join(g._id.toString()));
+            socket.emit('user_groups_list', groups);
+        } catch (err) {
+            console.error("Errore recupero gruppi:", err);
+        }
+    });
+
+    // --- GESTIONE MESSAGGI (Privati e Gruppi) ---
     socket.on('send_message', async (msgData, callback) => {
         try {
-            let recipientSocketId = activeUsers.get(msgData.recipient);
-            const isOnline = recipientSocketId && io.sockets.sockets.has(recipientSocketId);
+            const { sender, recipient, text, isGroup, tempId } = msgData;
 
             const newMessage = new Message({
-                sender: msgData.sender,
-                recipient: msgData.recipient,
-                text: msgData.text,
-                status: isOnline ? 'delivered' : 'sent'
+                sender,
+                recipient,
+                isGroup: !!isGroup,
+                text,
+                status: isGroup ? 'delivered' : 'sent'
             });
 
             await newMessage.save();
@@ -157,37 +228,50 @@ io.on('connection', (socket) => {
                 id: newMessage._id,
                 sender: newMessage.sender,
                 recipient: newMessage.recipient,
+                isGroup: newMessage.isGroup,
                 text: newMessage.text,
                 status: newMessage.status,
                 timestamp: newMessage.timestamp
             };
 
-            if (isOnline) {
-                io.to(recipientSocketId).emit('receive_message', messagePayload);
-            }
-            
-            if(typeof callback === 'function') {
-                callback({ success: true, message: messagePayload, tempId: msgData.tempId });
+            if (isGroup) {
+                // Invia a tutti i membri nella stanza del gruppo (tranne eventualmente chi invia se gestito dal client)
+                io.to(recipient).emit('receive_message', messagePayload);
+            } else {
+                let recipientSocketId = activeUsers.get(recipient);
+                const isOnline = recipientSocketId && io.sockets.sockets.has(recipientSocketId);
+                if (isOnline) {
+                    newMessage.status = 'delivered';
+                    await newMessage.save();
+                    messagePayload.status = 'delivered';
+                    io.to(recipientSocketId).emit('receive_message', messagePayload);
+                }
             }
 
+            if (typeof callback === 'function') {
+                callback({ success: true, message: messagePayload, tempId });
+            }
         } catch (err) {
             console.error("Errore invio messaggio:", err);
-            if(typeof callback === 'function') {
-                callback({ success: false });
-            }
+            if (typeof callback === 'function') callback({ success: false });
         }
     });
 
     socket.on('get_chat_history', async (data) => {
         try {
-            const { user1, user2 } = data;
-            const history = await Message.find({
-                $or: [
-                    { sender: user1, recipient: user2 },
-                    { sender: user2, recipient: user1 }
-                ]
-            }).sort({ timestamp: 1 });
-
+            const { user1, user2, isGroup } = data;
+            let history = [];
+            if (isGroup) {
+                history = await Message.find({ recipient: user2, isGroup: true }).sort({ timestamp: 1 });
+            } else {
+                history = await Message.find({
+                    isGroup: false,
+                    $or: [
+                        { sender: user1, recipient: user2 },
+                        { sender: user2, recipient: user1 }
+                    ]
+                }).sort({ timestamp: 1 });
+            }
             socket.emit('chat_history', history);
         } catch (err) {
             console.error("Errore cronologia:", err);
@@ -198,10 +282,14 @@ io.on('connection', (socket) => {
     socket.on('get_all_chats_history', async (data) => {
         try {
             const { userPhone } = data;
+            const userGroups = await Group.find({ members: userPhone });
+            const groupIds = userGroups.map(g => g._id.toString());
+
             const history = await Message.find({
                 $or: [
                     { sender: userPhone },
-                    { recipient: userPhone }
+                    { recipient: userPhone },
+                    { recipient: { $in: groupIds }, isGroup: true }
                 ]
             }).sort({ timestamp: 1 });
 
@@ -212,55 +300,106 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('update_status', async (data) => {
+    // --- GESTIONE CHIAMATE (Singole, Gruppo e Multi-utente) ---
+    socket.on('start_call', async (data) => {
+        // data: { initiatorPhone, initiatorName, targets: [phone1, phone2...], callType, isGroup, groupId }
         try {
-            const updatedMsg = await Message.findByIdAndUpdate(data.messageId, { status: data.status }, { new: true });
-            if (updatedMsg) {
-                // Notifica sia il mittente che il destinatario per aggiornare le spunte blu in tempo reale
-                let senderSocketId = activeUsers.get(updatedMsg.sender);
-                let recipientSocketId = activeUsers.get(updatedMsg.recipient);
-                
-                const payload = { messageId: data.messageId, status: data.status };
-                if (senderSocketId) io.to(senderSocketId).emit('message_status_updated', payload);
-                if (recipientSocketId) io.to(recipientSocketId).emit('message_status_updated', payload);
+            const callLog = new CallLog({
+                callType: data.callType,
+                isGroup: data.isGroup,
+                initiatorPhone: data.initiatorPhone,
+                initiatorName: data.initiatorName,
+                participants: [{ phone: data.initiatorPhone, name: data.initiatorName }]
+            });
+            await callLog.save();
+
+            // Invia evento di chiamata in arrivo a tutti i target specificati o ai membri del gruppo
+            data.targets.forEach(targetPhone => {
+                const targetSocketId = activeUsers.get(targetPhone);
+                if (targetSocketId && io.sockets.sockets.has(targetSocketId)) {
+                    io.to(targetSocketId).emit('incoming_call', {
+                        callId: callLog._id,
+                        initiatorPhone: data.initiatorPhone,
+                        initiatorName: data.initiatorName,
+                        callType: data.callType,
+                        isGroup: data.isGroup,
+                        groupId: data.groupId,
+                        targets: data.targets
+                    });
+                }
+            });
+
+            // Opzionalmente inserisci un messaggio di sistema in chat che avvisa della chiamata
+            if (data.isGroup && data.groupId) {
+                const callMsg = new Message({
+                    sender: data.initiatorPhone,
+                    recipient: data.groupId,
+                    isGroup: true,
+                    text: `📞 ${data.initiatorName} ha avviato una ${data.callType === 'video' ? 'videochiamata' : 'chiamata'} di gruppo.`,
+                    status: 'delivered'
+                });
+                await callMsg.save();
+                io.to(data.groupId).emit('receive_message', callMsg);
+            }
+
+            socket.emit('call_initiated', { callId: callLog._id });
+        } catch (err) {
+            console.error("Errore avvio chiamata:", err);
+        }
+    });
+
+    socket.on('join_call', async (data) => {
+        // data: { callId, userPhone, userName, targetSocketId/signal }
+        try {
+            await CallLog.findByIdAndUpdate(data.callId, {
+                $push: { participants: { phone: data.userPhone, name: data.userName } }
+            });
+
+            if (data.toIdentifier) {
+                const recipientSocketId = activeUsers.get(data.toIdentifier);
+                if (recipientSocketId) {
+                    io.to(recipientSocketId).emit('call_signal', {
+                        fromPhone: data.userPhone,
+                        signal: data.signal
+                    });
+                }
             }
         } catch (err) {
-            console.error("Errore aggiornamento stato:", err);
+            console.error("Errore unione chiamata:", err);
         }
     });
 
-    socket.on('call_user', (data) => {
+    socket.on('call_signal', (data) => {
         const recipientSocketId = activeUsers.get(data.toIdentifier);
-        if (recipientSocketId && io.sockets.sockets.has(recipientSocketId)) {
-            io.to(recipientSocketId).emit('incoming_call', {
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('call_signal', {
                 fromPhone: data.fromPhone,
-                fromName: data.fromName,
-                signal: data.signal,
-                callType: data.callType
+                signal: data.signal
             });
-        } else {
-            socket.emit('call_failed', { reason: "L'utente non è raggiungibile o è offline." });
         }
     });
 
-    socket.on('answer_call', (data) => {
-        const recipientSocketId = activeUsers.get(data.toIdentifier);
-        if (recipientSocketId) {
-            io.to(recipientSocketId).emit('call_accepted', { signal: data.signal });
+    socket.on('hang_up_call', async (data) => {
+        // data: { callId, targets: [...] }
+        if (data && data.targets) {
+            data.targets.forEach(phone => {
+                const sId = activeUsers.get(phone);
+                if (sId) io.to(sId).emit('call_ended');
+            });
         }
     });
 
-    socket.on('ice_candidate', (data) => {
-        const recipientSocketId = activeUsers.get(data.toIdentifier);
-        if (recipientSocketId) {
-            io.to(recipientSocketId).emit('ice_candidate', { signal: data.signal });
-        }
-    });
-
-    socket.on('hang_up', (data) => {
-        const recipientSocketId = activeUsers.get(data.toIdentifier);
-        if (recipientSocketId) {
-            io.to(recipientSocketId).emit('call_ended');
+    socket.on('get_call_logs', async (data) => {
+        try {
+            const logs = await CallLog.find({
+                $or: [
+                    { initiatorPhone: data.userPhone },
+                    { "participants.phone": data.userPhone }
+                ]
+            }).sort({ timestamp: -1 }).limit(50);
+            socket.emit('call_logs_list', logs);
+        } catch (err) {
+            console.error("Errore recupero registro chiamate:", err);
         }
     });
 
