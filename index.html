@@ -62,10 +62,11 @@
         .remote-video-container video { width: 100%; height: 100%; object-fit: cover; }
         .remote-video-label { position: absolute; bottom: 5px; left: 5px; background: rgba(0,0,0,0.6); padding: 2px 6px; font-size: 11px; border-radius: 4px; }
         #local-video { position: absolute; bottom: 20px; right: 20px; width: 100px; height: 140px; object-fit: cover; border-radius: 8px; border: 2px solid white; background: #000; z-index: 10; }
-        .call-controls { display: flex; gap: 20px; padding: 20px; z-index: 20; }
-        .call-btn { padding: 15px 30px; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; font-size: 16px; }
+        .call-controls { display: flex; gap: 15px; padding: 20px; z-index: 20; flex-wrap: wrap; justify-content: center; }
+        .call-btn { padding: 15px 25px; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; font-size: 16px; }
         .btn-hangup { background: #dc3545; color: white; }
         .btn-answer { background: #28a745; color: white; }
+        .btn-decline { background: #6c757d; color: white; }
 
         .section-header { padding: 15px; background: white; font-size: 18px; font-weight: bold; border-bottom: 1px solid #dee2e6; color: #343a40; display: flex; justify-content: space-between; align-items: center; }
         .p-15 { padding: 15px; }
@@ -74,6 +75,7 @@
         .call-log-item { padding: 14px 15px; border-bottom: 1px solid #f1f3f5; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
         .call-log-item:hover { background: #f8f9fa; }
         .call-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; background: #28a745; }
+        .call-dot.declined { background: #dc3545; }
 
         #notification-banner {
             position: fixed; top: -60px; left: 50%; transform: translateX(-50%);
@@ -183,7 +185,8 @@
         </div>
         <div class="call-controls">
             <button id="answer-call-btn" class="call-btn btn-answer" style="display:none;" onclick="acceptIncomingCall()">Rispondi</button>
-            <button class="call-btn btn-hangup" onclick="endCall()">Riaggancia</button>
+            <button id="decline-call-btn" class="call-btn btn-decline" style="display:none;" onclick="declineIncomingCall()">Rifiuta</button>
+            <button id="hangup-call-btn" class="call-btn btn-hangup" onclick="endCall()">Riaggancia</button>
         </div>
     </div>
 
@@ -458,7 +461,10 @@
             showNotificationBanner(`Chiamata in arrivo da ${data.initiatorName}`);
             document.getElementById('call-partner-label').innerText = `Da: ${data.initiatorName}`;
             document.getElementById('call-status-text').innerText = data.callType === 'video' ? "Videochiamata in arrivo..." : "Chiamata audio in arrivo...";
+            
             document.getElementById('answer-call-btn').style.display = 'block';
+            document.getElementById('decline-call-btn').style.display = 'block';
+            document.getElementById('hangup-call-btn').style.display = 'none';
             document.getElementById('call-window').style.display = 'flex';
         });
 
@@ -492,6 +498,11 @@
         });
 
         socket.on('call_ended', () => {
+            closeCallWindow();
+        });
+
+        socket.on('call_declined', (data) => {
+            showNotificationBanner(`Chiamata rifiutata da ${data.userName || 'un utente'}`);
             closeCallWindow();
         });
 
@@ -965,6 +976,10 @@
 
             document.getElementById('call-partner-label').innerText = isGroup ? "Chiamata di Gruppo" : `A: ${getDisplayName(targets[0])}`;
             document.getElementById('call-status-text').innerText = "Connessione in corso...";
+            
+            document.getElementById('answer-call-btn').style.display = 'none';
+            document.getElementById('decline-call-btn').style.display = 'none';
+            document.getElementById('hangup-call-btn').style.display = 'block';
             document.getElementById('call-window').style.display = 'flex';
 
             try {
@@ -1005,6 +1020,8 @@
 
         async function acceptIncomingCall() {
             document.getElementById('answer-call-btn').style.display = 'none';
+            document.getElementById('decline-call-btn').style.display = 'none';
+            document.getElementById('hangup-call-btn').style.display = 'block';
             document.getElementById('call-status-text').innerText = "Chiamata in corso";
 
             try {
@@ -1023,6 +1040,17 @@
             } catch(e) {
                 closeCallWindow();
             }
+        }
+
+        function declineIncomingCall() {
+            if(activeCallId) {
+                socket.emit('call_declined', {
+                    callId: activeCallId,
+                    userPhone: currentUser.phone,
+                    userName: currentUser.name
+                });
+            }
+            closeCallWindow();
         }
 
         function createPeerConnectionForUser(remotePhone) {
@@ -1133,14 +1161,18 @@
                     titleLabel = otherParticipant ? getDisplayName(otherParticipant.phone) : log.initiatorName;
                 }
 
+                let isDeclined = log.status === 'declined';
+                let statusText = isDeclined ? 'Rifiutata' : 'Svolta';
+                let dotClass = isDeclined ? 'call-dot declined' : 'call-dot';
+
                 const div = document.createElement('div');
                 div.className = 'call-log-item';
                 div.innerHTML = `
                     <div style="display:flex; align-items:center; gap:10px;">
-                        <span class="call-dot"></span>
+                        <span class="${dotClass}"></span>
                         <div>
                             <b style="color: #212529; font-size: 15px;">${titleLabel}</b>
-                            <div style="font-size: 12px; color: #6c757d; font-weight: normal;">${callTypeLabel} - Svolta</div>
+                            <div style="font-size: 12px; color: #6c757d; font-weight: normal;">${callTypeLabel} - ${statusText}</div>
                         </div>
                     </div>
                     <div style="text-align: right; font-size: 12px; color: #495057;">
