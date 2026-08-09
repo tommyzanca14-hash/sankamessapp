@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Omega7 Messaggi & Chiamate</title>
+    <title>Omega7 Messaggi, Gruppi & Chiamate</title>
     <script src="/socket.io/socket.io.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-weight: 600; }
@@ -36,8 +36,8 @@
         }
         .chat-badge { position: static; display: inline-block; margin-left: 8px; }
 
-        .chat-header { padding: 15px; background: white; border-bottom: 1px solid #dee2e6; }
-        .chat-header input { width: 100%; padding: 10px 15px; border: 1px solid #ced4da; border-radius: 20px; outline: none; background: #f8f9fa; font-weight: normal; }
+        .chat-header { padding: 15px; background: white; border-bottom: 1px solid #dee2e6; display: flex; gap: 10px; align-items: center; }
+        .chat-header input { flex: 1; padding: 10px 15px; border: 1px solid #ced4da; border-radius: 20px; outline: none; background: #f8f9fa; font-weight: normal; }
         .chat-subbar { display: flex; justify-content: space-between; padding: 10px 15px; background: #e9ecef; font-size: 14px; color: #495057; border-bottom: 1px solid #dee2e6; font-weight: bold; }
         .chat-list { flex: 1; overflow-y: auto; background: white; }
         .chat-item { padding: 16px 15px; border-bottom: 1px solid #f1f3f5; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
@@ -50,6 +50,7 @@
         .message-bubble { max-width: 75%; padding: 10px 14px; border-radius: 10px; font-size: 14px; word-wrap: break-word; display: flex; flex-direction: column; gap: 4px; font-weight: normal; user-select: none; }
         .message-bubble.sent { background: #d4edda; align-self: flex-end; color: #155724; }
         .message-bubble.received { background: white; align-self: flex-start; color: #212529; }
+        .message-sender-name { font-size: 12px; font-weight: bold; color: #007bff; margin-bottom: 2px; }
         .message-footer { display: flex; justify-content: flex-end; align-items: center; gap: 4px; font-size: 11px; }
         .status-ticks { font-weight: bold; font-size: 13px; }
         .status-ticks.blue { color: #007bff; }
@@ -60,20 +61,22 @@
         .active-chat-input button { padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 20px; cursor: pointer; font-weight: bold; font-size: 14px; }
 
         #call-window { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #111; z-index: 3000; flex-direction: column; justify-content: space-between; align-items: center; padding: 20px; color: white; }
-        .call-videos { width: 100%; flex: 1; display: flex; position: relative; justify-content: center; align-items: center; overflow: hidden; }
-        #remote-video { width: 100%; height: 100%; object-fit: cover; background: #222; border-radius: 10px; }
-        #local-video { position: absolute; bottom: 20px; right: 20px; width: 100px; height: 140px; object-fit: cover; border-radius: 8px; border: 2px solid white; background: #000; }
-        .call-controls { display: flex; gap: 20px; padding: 20px; }
+        .call-videos { width: 100%; flex: 1; display: flex; position: relative; justify-content: center; align-items: center; overflow: hidden; flex-wrap: wrap; gap: 10px; }
+        .remote-video-container { position: relative; width: 45%; height: 45%; min-width: 200px; min-height: 150px; background: #222; border-radius: 8px; overflow: hidden; }
+        .remote-video-container video { width: 100%; height: 100%; object-fit: cover; }
+        .remote-video-label { position: absolute; bottom: 5px; left: 5px; background: rgba(0,0,0,0.6); padding: 2px 6px; font-size: 11px; border-radius: 4px; }
+        #local-video { position: absolute; bottom: 20px; right: 20px; width: 100px; height: 140px; object-fit: cover; border-radius: 8px; border: 2px solid white; background: #000; z-index: 10; }
+        .call-controls { display: flex; gap: 20px; padding: 20px; z-index: 20; }
         .call-btn { padding: 15px 30px; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; font-size: 16px; }
         .btn-hangup { background: #dc3545; color: white; }
         .btn-answer { background: #28a745; color: white; }
 
-        .section-header { padding: 15px; background: white; font-size: 18px; font-weight: bold; border-bottom: 1px solid #dee2e6; color: #343a40; }
+        .section-header { padding: 15px; background: white; font-size: 18px; font-weight: bold; border-bottom: 1px solid #dee2e6; color: #343a40; display: flex; justify-content: space-between; align-items: center; }
         .p-15 { padding: 15px; }
 
-        /* Stili Registro Chiamate */
         .call-log-list { flex: 1; overflow-y: auto; background: white; }
-        .call-log-item { padding: 14px 15px; border-bottom: 1px solid #f1f3f5; display: flex; justify-content: space-between; align-items: center; }
+        .call-log-item { padding: 14px 15px; border-bottom: 1px solid #f1f3f5; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+        .call-log-item:hover { background: #f8f9fa; }
         .call-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; }
         .dot-gray { background: #adb5bd; }
         .dot-red { background: #dc3545; }
@@ -89,46 +92,85 @@
         }
         #notification-banner.show { top: 15px; }
 
-        #contact-info-modal {
+        .modal-overlay {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.5); z-index: 3500; justify-content: center; align-items: center; padding: 20px;
         }
         .modal-content {
-            background: white; width: 100%; max-width: 320px; border-radius: 12px; padding: 20px;
-            display: flex; flex-direction: column; gap: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            background: white; width: 100%; max-width: 360px; border-radius: 12px; padding: 20px;
+            display: flex; flex-direction: column; gap: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); max-height: 90vh; overflow-y: auto;
         }
         .modal-content h3 { font-size: 18px; color: #333; border-bottom: 1px solid #dee2e6; padding-bottom: 10px; }
         .modal-info-row { font-size: 14px; color: #495057; font-weight: normal; display: flex; flex-direction: column; gap: 4px; }
         .modal-info-row b { color: #212529; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .checkbox-list { max-height: 150px; overflow-y: auto; border: 1px solid #ced4da; border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
     </style>
 </head>
 <body>
 
     <div id="notification-banner">Notifica</div>
 
-    <div id="contact-info-modal">
+    <!-- Modale Info Contatto -->
+    <div id="contact-info-modal" class="modal-overlay">
         <div class="modal-content">
             <h3>Informazioni Contatto</h3>
-            <div class="modal-info-row">
-                <b>Nome in Rubrica</b>
-                <span id="modal-contact-nickname">-</span>
-            </div>
-            <div class="modal-info-row">
-                <b>Username (Nome Reale)</b>
-                <span id="modal-contact-username">-</span>
-            </div>
-            <div class="modal-info-row">
-                <b>Numero di Telefono</b>
-                <span id="modal-contact-phone">-</span>
-            </div>
-            <div class="modal-info-row">
-                <b>Email</b>
-                <span id="modal-contact-email">-</span>
-            </div>
-            <button onclick="closeContactInfoModal()" style="margin-top: 10px; padding: 10px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">Chiudi</button>
+            <div class="modal-info-row"><b>Nome in Rubrica</b><span id="modal-contact-nickname">-</span></div>
+            <div class="modal-info-row"><b>Username (Nome Reale)</b><span id="modal-contact-username">-</span></div>
+            <div class="modal-info-row"><b>Numero di Telefono</b><span id="modal-contact-phone">-</span></div>
+            <div class="modal-info-row"><b>Email</b><span id="modal-contact-email">-</span></div>
+            <button onclick="closeModal('contact-info-modal')" style="margin-top: 10px; padding: 10px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">Chiudi</button>
         </div>
     </div>
 
+    <!-- Modale Dettagli Partecipanti Chiamata -->
+    <div id="call-details-modal" class="modal-overlay">
+        <div class="modal-content">
+            <h3>Partecipanti Chiamata</h3>
+            <div id="call-participants-list" style="display:flex; flex-direction:column; gap:6px; font-weight:normal; font-size:14px;"></div>
+            <button onclick="closeModal('call-details-modal')" style="margin-top: 10px; padding: 10px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">Chiudi</button>
+        </div>
+    </div>
+
+    <!-- Modale Crea Gruppo -->
+    <div id="create-group-modal" class="modal-overlay">
+        <div class="modal-content">
+            <h3>Crea Nuovo Gruppo</h3>
+            <div class="modal-info-row">
+                <b>Nome Gruppo</b>
+                <input type="text" id="group-name-input" placeholder="Nome del gruppo..." style="padding: 8px; border: 1px solid #ced4da; border-radius: 6px; font-weight: normal;">
+            </div>
+            <div class="modal-info-row">
+                <b>Descrizione (facoltativa)</b>
+                <input type="text" id="group-desc-input" placeholder="Scopo del gruppo..." style="padding: 8px; border: 1px solid #ced4da; border-radius: 6px; font-weight: normal;">
+            </div>
+            <div class="modal-info-row">
+                <b>Seleziona Membri</b>
+                <div class="checkbox-list" id="group-members-checkboxes"></div>
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <button onclick="createGroup()" style="flex:1; padding: 10px; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">Crea</button>
+                <button onclick="closeModal('create-group-modal')" style="flex:1; padding: 10px; background: #dc3545; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">Annulla</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modale Nuova Chiamata da Registro -->
+    <div id="new-call-modal" class="modal-overlay">
+        <div class="modal-content">
+            <h3>Nuova Chiamata / Videochiamata</h3>
+            <div class="modal-info-row">
+                <b>Seleziona Contatti o Gruppo</b>
+                <div class="checkbox-list" id="new-call-targets-checkboxes"></div>
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <button onclick="initiateMultiCall('audio')" style="flex:1; padding: 10px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">📞 Audio</button>
+                <button onclick="initiateMultiCall('video')" style="flex:1; padding: 10px; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">📹 Video</button>
+            </div>
+            <button onclick="closeModal('new-call-modal')" style="margin-top: 5px; padding: 8px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">Annulla</button>
+        </div>
+    </div>
+
+    <!-- Schermata di Registrazione Iniziale -->
     <div id="register-screen">
         <h2>Benvenuto su Omega7</h2>
         <p style="margin-bottom: 15px; color: #495057; font-size: 14px; text-align: center;">Inserisci i tuoi dati per iniziare</p>
@@ -138,14 +180,14 @@
         <button onclick="registerUser()">Registrati ed entra</button>
     </div>
 
+    <!-- Finestra Chiamata In Corso -->
     <div id="call-window">
         <div style="text-align: center; margin-top: 10px;">
             <h3 id="call-status-text">Chiamata in corso...</h3>
             <p id="call-timer-display" style="font-size: 16px; color: #28a745; font-weight: bold; margin-top: 4px; display: none;">00:00</p>
             <p id="call-partner-label" style="font-size: 14px; color: #adb5bd;"></p>
         </div>
-        <div class="call-videos">
-            <video id="remote-video" autoplay playsinline></video>
+        <div class="call-videos" id="call-videos-container">
             <video id="local-video" autoplay playsinline muted></video>
         </div>
         <div class="call-controls">
@@ -154,17 +196,18 @@
         </div>
     </div>
 
+    <!-- Finestra Chat Attiva -->
     <div id="active-chat-window">
         <div class="active-chat-header">
             <div style="display:flex; align-items:center; gap:10px;">
                 <button onclick="closeChat()" style="background:none; border:none; color:white; font-size:18px; cursor:pointer; font-weight:bold;">⬅</button>
-                <span id="chat-partner-name" style="font-weight: bold;">Nome Amico</span>
+                <span id="chat-partner-name" style="font-weight: bold;">Nome Chat</span>
             </div>
             <div style="display:flex; gap: 12px; align-items:center;">
-                <button onclick="startCall('audio')" style="background:none; border:none; color:white; font-size:20px; cursor:pointer;" title="Chiamata Audio">📞</button>
-                <button onclick="startCall('video')" style="background:none; border:none; color:white; font-size:20px; cursor:pointer;" title="Videochiamata">📹</button>
+                <button onclick="startDirectCall('audio')" style="background:none; border:none; color:white; font-size:20px; cursor:pointer;" title="Chiamata Audio">📞</button>
+                <button onclick="startDirectCall('video')" style="background:none; border:none; color:white; font-size:20px; cursor:pointer;" title="Videochiamata">📹</button>
                 <button onclick="quickSaveContact()" id="quick-save-btn" style="background:#495057; color:white; border:none; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer; display:none; font-weight:bold;">Salva</button>
-                <button onclick="openContactInfoModal()" style="background:none; border:none; color:white; font-size:22px; cursor:pointer; font-weight:bold; padding: 0 4px;" title="Informazioni Contatto">⠇</button>
+                <button onclick="openContactInfoModal()" id="info-contact-btn" style="background:none; border:none; color:white; font-size:22px; cursor:pointer; font-weight:bold; padding: 0 4px;" title="Informazioni Contatto">⠇</button>
             </div>
         </div>
         <div class="active-chat-messages" id="messages-box"></div>
@@ -174,6 +217,7 @@
         </div>
     </div>
 
+    <!-- Sezione 1: Chat e Gruppi -->
     <div id="section-chats" class="content-section active">
         <div class="chat-header">
             <input type="text" id="search-chats" placeholder="Cerca tra le chat..." oninput="filterChats(this.value)">
@@ -185,30 +229,41 @@
         <div class="chat-list" id="chat-list-container"></div>
     </div>
 
+    <!-- Sezione 2: Registro Chiamate -->
     <div id="section-calls" class="content-section">
-        <div class="section-header">Registro Chiamate</div>
-        <div class="call-log-list" id="call-log-container">
-            <!-- Storico delle chiamate -->
+        <div class="section-header">
+            Registro Chiamate
+            <button onclick="openNewCallModal()" style="background:#007bff; color:white; border:none; border-radius:6px; padding:6px 12px; font-size:13px; cursor:pointer; font-weight:bold;">➕ Nuova Chiamata</button>
         </div>
+        <div class="call-log-list" id="call-log-container"></div>
     </div>
 
+    <!-- Sezione 3: Aggiungi Contatto / Gruppo (Icona 3 con il +) -->
     <div id="section-add" class="content-section">
-        <div class="section-header">Aggiungi Contatto</div>
-        <div class="p-15">
+        <div class="section-header">Gestione Contatti & Gruppi</div>
+        <div class="p-15" style="display:flex; flex-direction:column; gap:20px;">
             <div style="display: flex; flex-direction: column; gap: 12px; background:white; padding:20px; border-radius:10px; border:1px solid #dee2e6;">
-                <p style="font-size: 13px; color: #495057; font-weight: normal;">Inserisci l'identificativo esatto (Numero, Username o Email):</p>
+                <h4 style="color:#333; font-size:16px;">Crea Nuovo Gruppo</h4>
+                <p style="font-size: 13px; color: #495057; font-weight: normal;">Crea un gruppo fino a 64 partecipanti:</p>
+                <button onclick="openCreateGroupModal()" style="padding: 12px; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight:bold;">Crea Nuovo Gruppo</button>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 12px; background:white; padding:20px; border-radius:10px; border:1px solid #dee2e6;">
+                <h4 style="color:#333; font-size:16px;">Aggiungi Contatto Singolo</h4>
                 <input type="text" id="new-contact-identifier" placeholder="Numero, Username o Email" style="padding: 10px; border: 1px solid #ced4da; border-radius: 6px; font-weight: normal;">
                 <input type="text" id="new-contact-nickname" placeholder="Nome da visualizzare in rubrica" style="padding: 10px; border: 1px solid #ced4da; border-radius: 6px; font-weight: normal;">
-                <button onclick="addContact()" style="padding: 12px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight:bold;">Salva in Rubrica</button>
+                <button onclick="addContact()" style="padding: 12px; background: #6c757d; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">Salva in Rubrica</button>
             </div>
         </div>
     </div>
 
+    <!-- Sezione 4: Social -->
     <div id="section-social" class="content-section">
         <div class="section-header">Social & Storie</div>
         <div class="p-15"><p style="font-weight: normal; color: #495057;">Feed post e storie.</p></div>
     </div>
 
+    <!-- Sezione 5: Profilo -->
     <div id="section-profile" class="content-section">
         <div class="section-header">Il Mio Profilo</div>
         <div class="p-15" style="display: flex; flex-direction: column; gap: 15px;">
@@ -217,6 +272,7 @@
         </div>
     </div>
 
+    <!-- Barra di Navigazione in Basso -->
     <nav class="bottom-nav">
         <button class="nav-item active" onclick="switchTab('chats', this)"><span>💬</span>Chat<span id="badge-chats" class="nav-badge">0</span></button>
         <button class="nav-item" onclick="switchTab('calls', this)"><span>📞</span>Chiamate</button>
@@ -229,31 +285,26 @@
         const socket = io();
         let currentUser = null;
         let contacts = []; 
+        let groups = [];
         let messages = [];
-        let callLogs = []; // Array per il registro chiamate
-        let currentChatContact = null;
+        let callLogs = [];
+        let currentChatContact = null; // Può essere un utente o un gruppo
         let isAlphabetical = false;
 
-        let peerConnection;
-        let localStream;
-        let incomingCallData = null;
-        
+        let peerConnections = {}; // socketId/phone -> RTCPeerConnection
+        let localStream = null;
+        let activeCallId = null;
+        let activeCallType = 'audio';
+        let activeCallIsGroup = false;
         let callTimerInterval = null;
         let callSecondsElapsed = 0;
-        let callStatusState = 'gray'; // gray, red, orange, yellow, green
-        let activeCallPartner = null;
-        let activeCallType = 'audio';
-        let isCaller = false;
-        let ringTimeout = null;
+        let incomingCallPayload = null;
 
         const rtcConfig = { 
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' },
-                { urls: 'stun:stun.stunprotocol.org:3478' }
-            ],
-            iceCandidatePoolSize: 10
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
         };
 
         function playNotificationSound() {
@@ -279,6 +330,10 @@
             setTimeout(() => banner.classList.remove('show'), 3500);
         }
 
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+        }
+
         window.onload = () => {
             const savedUser = localStorage.getItem('omega7_user');
             if(savedUser) {
@@ -287,9 +342,10 @@
                 document.getElementById('profile-info').innerText = `Username: ${currentUser.name} | Tel: ${currentUser.phone} | Email: ${currentUser.email}`;
                 document.getElementById('register-screen').style.display = 'none';
                 socket.emit('login_user', { phone: currentUser.phone });
+                socket.emit('get_user_groups', { userPhone: currentUser.phone });
                 requestAllChatsHistory();
                 updateContactsDisplay();
-                updateCallLogDisplay();
+                loadCallLogsFromServer();
             }
         };
 
@@ -300,13 +356,29 @@
             document.getElementById('profile-info').innerText = `Username: ${currentUser.name} | Tel: ${currentUser.phone} | Email: ${currentUser.email}`;
             document.getElementById('register-screen').style.display = 'none';
             socket.emit('login_user', { phone: currentUser.phone });
+            socket.emit('get_user_groups', { userPhone: currentUser.phone });
             requestAllChatsHistory();
             updateContactsDisplay();
-            updateCallLogDisplay();
+            loadCallLogsFromServer();
         });
 
         socket.on('registration_error', (err) => alert(err));
-        socket.on('login_success', () => requestAllChatsHistory());
+        socket.on('login_success', () => {
+            requestAllChatsHistory();
+            socket.emit('get_user_groups', { userPhone: currentUser.phone });
+        });
+
+        socket.on('user_groups_list', (list) => {
+            groups = list;
+            updateContactsDisplay();
+        });
+
+        socket.on('group_created', (group) => {
+            if(!groups.some(g => g._id === group._id)) {
+                groups.push(group);
+                updateContactsDisplay();
+            }
+        });
 
         function logoutUser() {
             if(confirm("Vuoi davvero uscire dal tuo account?")) {
@@ -326,18 +398,11 @@
             if(!currentUser) return;
             let savedContacts = localStorage.getItem('omega7_contacts_' + currentUser.phone);
             contacts = savedContacts ? JSON.parse(savedContacts) : [];
-            let savedCalls = localStorage.getItem('omega7_calls_' + currentUser.phone);
-            callLogs = savedCalls ? JSON.parse(savedCalls) : [];
         }
 
         function saveContactsToLocalStorage() {
             if(!currentUser) return;
             localStorage.setItem('omega7_contacts_' + currentUser.phone, JSON.stringify(contacts));
-        }
-
-        function saveCallsToLocalStorage() {
-            if(!currentUser) return;
-            localStorage.setItem('omega7_calls_' + currentUser.phone, JSON.stringify(callLogs));
         }
 
         socket.on('receive_message', (msg) => {
@@ -359,12 +424,9 @@
             updateContactsDisplay();
             
             if(currentChatContact) {
-                const pId = currentChatContact.phone;
-                if(msg.sender === pId || msg.recipient === pId) {
+                const targetId = currentChatContact.isGroup ? currentChatContact._id : currentChatContact.phone;
+                if(msg.recipient === targetId || msg.sender === targetId) {
                     renderMessages();
-                    if(msg.recipient === currentUser.phone && msg.status !== 'read') {
-                        socket.emit('update_status', { messageId: msg.id, status: 'read' });
-                    }
                 }
             }
         });
@@ -388,75 +450,51 @@
                 if(!exists) messages.push(dbMsg);
             });
             updateContactsDisplay();
-            if(currentChatContact) {
-                renderMessages();
-                chatHistoryMarkRead(history);
-            }
-        });
-
-        function chatHistoryMarkRead(history) {
-            history.forEach(m => {
-                let mId = m._id || m.id;
-                if(m.recipient === currentUser.phone && m.status !== 'read') {
-                    socket.emit('update_status', { messageId: mId, status: 'read' });
-                }
-            });
-        }
-
-        socket.on('message_status_updated', (data) => {
-            let msg = messages.find(m => m.id === data.messageId || m._id === data.messageId || (m.id && m.id.toString() === data.messageId.toString()));
-            if(msg) {
-                msg.status = data.status;
-                if(currentChatContact) renderMessages();
-            }
+            if(currentChatContact) renderMessages();
         });
 
         socket.on('incoming_call', (data) => {
             if(!currentUser) return;
-            incomingCallData = data;
-            isCaller = false;
-            activeCallPartner = data.fromPhone;
-            activeCallType = data.callType || 'audio';
-            callStatusState = 'yellow'; // Se non risponde nessuno (ricevente)
+            incomingCallPayload = data;
+            activeCallId = data.callId;
+            activeCallType = data.callType;
+            activeCallIsGroup = data.isGroup;
 
             playNotificationSound();
-            showNotificationBanner(`Chiamata in arrivo da ${data.fromName || data.fromPhone}`);
-            document.getElementById('call-partner-label').innerText = `Da: ${data.fromName || data.fromPhone}`;
+            showNotificationBanner(`Chiamata in arrivo da ${data.initiatorName}`);
+            document.getElementById('call-partner-label').innerText = `Da: ${data.initiatorName}`;
             document.getElementById('call-status-text').innerText = data.callType === 'video' ? "Videochiamata in arrivo..." : "Chiamata audio in arrivo...";
             document.getElementById('answer-call-btn').style.display = 'block';
             document.getElementById('call-window').style.display = 'flex';
         });
 
-        socket.on('call_failed', (data) => { 
-            // Se destinatario non raggiungibile o offline
-            callStatusState = 'red';
-            alert(data.reason || "Chiamata non arrivata al destinatario."); 
-            closeCallWindow(); 
-        });
-
-        socket.on('call_rejected', () => {
-            callStatusState = 'orange'; // Rifiutata
-            showNotificationBanner("Chiamata rifiutata dall'utente.");
-            closeCallWindow();
-        });
-
-        socket.on('call_accepted', async (data) => {
-            if(peerConnection) {
-                try {
-                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signal));
-                    startCallTimerAndGreenState();
-                } catch(e) {}
+        socket.on('call_signal', async (data) => {
+            // data: { fromPhone, signal }
+            let pc = peerConnections[data.fromPhone];
+            if(!pc) {
+                pc = createPeerConnectionForUser(data.fromPhone);
             }
-        });
-
-        socket.on('ice_candidate', async (data) => {
-            if(peerConnection && data.signal) {
-                try { await peerConnection.addIceCandidate(new RTCIceCandidate(data.signal)); } catch(e) {}
-            }
+            try {
+                if(data.signal.type === 'offer') {
+                    await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    socket.emit('call_signal', { toIdentifier: data.fromPhone, signal: answer });
+                } else if(data.signal.type === 'answer') {
+                    await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
+                } else if(data.signal.candidate) {
+                    await pc.addIceCandidate(new RTCIceCandidate(data.signal));
+                }
+            } catch(e) {}
         });
 
         socket.on('call_ended', () => {
             closeCallWindow();
+        });
+
+        socket.on('call_logs_list', (logs) => {
+            callLogs = logs;
+            updateCallLogDisplay();
         });
 
         function registerUser() {
@@ -477,8 +515,13 @@
             document.getElementById('section-' + tabName).classList.add('active');
             element.classList.add('active');
             if(tabName === 'calls') {
-                updateCallLogDisplay();
+                loadCallLogsFromServer();
             }
+        }
+
+        function loadCallLogsFromServer() {
+            if(!currentUser) return;
+            socket.emit('get_call_logs', { userPhone: currentUser.phone });
         }
 
         function addContact() {
@@ -519,14 +562,165 @@
             });
         }
 
+        // Funzione per risolvere il nome di un utente (gestione tilde ~ per non memorizzati)
+        function getDisplayName(phone, groupContextMembers = null) {
+            if(!currentUser) return phone;
+            if(phone === currentUser.phone) return "Tu";
+
+            let saved = contacts.find(c => c.phone === phone);
+            if(saved) return saved.name;
+
+            // Se siamo in un gruppo o in generale, se non è salvato cerchiamo il suo realName se disponibile o restituiamo ~username
+            // Nei gruppi, se è un utente noto tramite server/messaggi passati, cerchiamo di recuperare il nome reale o mostriamo ~phone
+            return "~" + phone;
+        }
+
+        function openCreateGroupModal() {
+            const container = document.getElementById('group-members-checkboxes');
+            container.innerHTML = '';
+            
+            if(contacts.length === 0) {
+                container.innerHTML = '<span style="font-size:12px; color:#6c757d;">Nessun contatto in rubrica da aggiungere.</span>';
+            } else {
+                contacts.forEach(c => {
+                    const label = document.createElement('label');
+                    label.style.display = 'flex';
+                    label.style.alignItems = 'center';
+                    label.style.gap = '8px';
+                    label.style.fontSize = '14px';
+                    label.innerHTML = `<input type="checkbox" value="${c.phone}" class="group-member-chk"> ${c.name} (${c.phone})`;
+                    container.appendChild(label);
+                });
+            }
+            document.getElementById('group-name-input').value = '';
+            document.getElementById('group-desc-input').value = '';
+            document.getElementById('create-group-modal').style.display = 'flex';
+        }
+
+        function createGroup() {
+            const name = document.getElementById('group-name-input').value.trim();
+            const description = document.getElementById('group-desc-input').value.trim();
+            const checkboxes = document.querySelectorAll('.group-member-chk:checked');
+            
+            if(!name) {
+                alert("Inserisci un nome per il gruppo.");
+                return;
+            }
+
+            let members = Array.from(checkboxes).map(chk => chk.value);
+            if(members.length === 0) {
+                alert("Seleziona almeno un membro per il gruppo.");
+                return;
+            }
+
+            socket.emit('create_group', {
+                name,
+                description,
+                members,
+                admin: currentUser.phone
+            }, (res) => {
+                if(res.success) {
+                    closeModal('create-group-modal');
+                    alert("Gruppo creato con successo!");
+                } else {
+                    alert(res.message || "Errore nella creazione del gruppo.");
+                }
+            });
+        }
+
+        function openNewCallModal() {
+            const container = document.getElementById('new-call-targets-checkboxes');
+            container.innerHTML = '';
+
+            // Aggiungi gruppi
+            if(groups.length > 0) {
+                let groupHeader = document.createElement('b');
+                groupHeader.innerText = "Gruppi:";
+                container.appendChild(groupHeader);
+                groups.forEach(g => {
+                    let lbl = document.createElement('label');
+                    lbl.style.display = 'flex';
+                    lbl.style.alignItems = 'center';
+                    lbl.style.gap = '8px';
+                    lbl.style.fontSize = '14px';
+                    lbl.innerHTML = `<input type="checkbox" value="group_${g._id}" class="call-target-chk"> 👥 [Gruppo] ${g.name}`;
+                    container.appendChild(lbl);
+                });
+            }
+
+            // Aggiungi contatti rubrica
+            if(contacts.length > 0) {
+                let contactHeader = document.createElement('b');
+                contactHeader.innerText = "Contatti:";
+                container.style.marginTop = '8px';
+                container.appendChild(contactHeader);
+                contacts.forEach(c => {
+                    let lbl = document.createElement('label');
+                    lbl.style.display = 'flex';
+                    lbl.style.alignItems = 'center';
+                    lbl.style.gap = '8px';
+                    lbl.style.fontSize = '14px';
+                    lbl.innerHTML = `<input type="checkbox" value="${c.phone}" class="call-target-chk"> 👤 ${c.name}`;
+                    container.appendChild(lbl);
+                });
+            }
+
+            document.getElementById('new-call-modal').style.display = 'flex';
+        }
+
+        function initiateMultiCall(callType) {
+            const checkboxes = document.querySelectorAll('.call-target-chk:checked');
+            if(checkboxes.length === 0) {
+                alert("Seleziona almeno un contatto o un gruppo da chiamare.");
+                return;
+            }
+
+            let targets = [];
+            let isGroupCall = false;
+            let targetGroupId = null;
+
+            checkboxes.forEach(chk => {
+                let val = chk.value;
+                if(val.startsWith('group_')) {
+                    isGroupCall = true;
+                    targetGroupId = val.replace('group_', '');
+                    let gObj = groups.find(g => g._id === targetGroupId);
+                    if(gObj) {
+                        gObj.members.forEach(m => {
+                            if(m !== currentUser.phone && !targets.includes(m)) targets.push(m);
+                        });
+                    }
+                } else {
+                    if(!targets.includes(val)) targets.push(val);
+                }
+            });
+
+            closeModal('new-call-modal');
+            startCallProcess(targets, callType, isGroupCall, targetGroupId);
+        }
+
         function updateContactsDisplay(filterText = '') {
             const container = document.getElementById('chat-list-container');
             if(!currentUser) return;
 
             let activeMap = new Map();
 
+            // Aggiungi gruppi
+            groups.forEach(g => {
+                activeMap.set(g._id, {
+                    isGroup: true,
+                    id: g._id,
+                    name: g.name,
+                    description: g.description,
+                    members: g.members,
+                    unreadCount: 0
+                });
+            });
+
+            // Aggiungi contatti salvati
             contacts.forEach(c => {
                 activeMap.set(c.phone, { 
+                    isGroup: false,
                     name: c.name, 
                     phone: c.phone, 
                     email: c.email || 'N/D',
@@ -536,33 +730,27 @@
                 });
             });
 
+            // Analizza messaggi per chat attive con sconosciuti
             messages.forEach(m => {
                 let isMe = (m.sender === currentUser.phone);
-                let other = isMe ? m.recipient : m.sender;
-                
-                if(other && other !== currentUser.phone) {
-                    let entry = null;
-                    for(let [phoneKey, val] of activeMap.entries()) {
-                        if(phoneKey === other || val.realName === other) {
-                            entry = val;
-                            break;
+                if(m.isGroup) {
+                    // Gestito tramite i gruppi
+                } else {
+                    let other = isMe ? m.recipient : m.sender;
+                    if(other && other !== currentUser.phone) {
+                        let entry = activeMap.get(other);
+                        if(!entry) {
+                            entry = { 
+                                isGroup: false,
+                                name: "~" + other, 
+                                phone: other, 
+                                email: 'N/D',
+                                realName: other, 
+                                isSaved: false,
+                                unreadCount: 0
+                            };
+                            activeMap.set(other, entry);
                         }
-                    }
-
-                    if(!entry) {
-                        entry = { 
-                            name: other, 
-                            phone: other, 
-                            email: 'N/D',
-                            realName: other, 
-                            isSaved: false,
-                            unreadCount: 0
-                        };
-                        activeMap.set(other, entry);
-                    }
-
-                    if(!isMe && m.status !== 'read' && (!currentChatContact || currentChatContact.phone !== entry.phone)) {
-                        entry.unreadCount = (entry.unreadCount || 0) + 1;
                     }
                 }
             });
@@ -572,23 +760,14 @@
             if(filterText) {
                 displayList = displayList.filter(item => 
                     item.name.toLowerCase().includes(filterText.toLowerCase()) || 
-                    item.phone.toLowerCase().includes(filterText.toLowerCase())
+                    (item.phone && item.phone.toLowerCase().includes(filterText.toLowerCase()))
                 );
             }
 
             document.getElementById('contacts-count').innerText = `Chat attive: ${displayList.length}`;
 
-            let totalUnread = displayList.reduce((sum, item) => sum + (item.unreadCount || 0), 0);
-            const badgeChats = document.getElementById('badge-chats');
-            if(totalUnread > 0) {
-                badgeChats.innerText = totalUnread;
-                badgeChats.style.display = 'inline-block';
-            } else {
-                badgeChats.style.display = 'none';
-            }
-
             if(displayList.length === 0) {
-                container.innerHTML = '<div class="chat-item" style="font-weight:normal; color:#6c757d;">Nessuna chat attiva. Aggiungi un contatto dal [+] o attendi un messaggio.</div>';
+                container.innerHTML = '<div class="chat-item" style="font-weight:normal; color:#6c757d;">Nessuna chat attiva.</div>';
                 return;
             }
 
@@ -600,59 +779,18 @@
             displayList.forEach(chatObj => {
                 const div = document.createElement('div');
                 div.className = 'chat-item';
-                let label = chatObj.isSaved ? `<b style="color: #000; font-weight: bold;">${chatObj.name}</b>` : `<span style="color:#d9534f; font-weight: bold;">Sconosciuto: ${chatObj.phone}</span>`;
-                let unreadBadgeHtml = (chatObj.unreadCount > 0) ? `<span class="chat-badge">${chatObj.unreadCount}</span>` : '';
-
-                let editBtnHtml = chatObj.isSaved ? `<button type="button" class="edit-btn" style="background:#495057; color:white; border:none; border-radius:6px; padding:10px 14px; font-size:14px; cursor:pointer; margin-right:10px; font-weight:bold;">Modifica</button>` : '';
-
-                div.innerHTML = `<div>${label} ${unreadBadgeHtml}</div> <div style="display:flex; align-items:center;">${editBtnHtml}<span style="color:#6c757d; font-size:13px; font-weight:bold;">Apri ➡</span></div>`;
                 
-                div.onclick = () => openChat(chatObj);
-
-                if(chatObj.isSaved) {
-                    const btnEdit = div.querySelector('.edit-btn');
-                    btnEdit.onclick = (e) => {
-                        e.stopPropagation();
-                        editContactNameByPhone(chatObj.phone);
-                    };
+                let label = '';
+                if(chatObj.isGroup) {
+                    label = `<b style="color: #007bff; font-weight: bold;">👥 [Gruppo] ${chatObj.name}</b>`;
+                } else {
+                    label = chatObj.isSaved ? `<b style="color: #000; font-weight: bold;">${chatObj.name}</b>` : `<span style="color:#d9534f; font-weight: bold;">${chatObj.name}</span>`;
                 }
 
-                let pressTimer;
-                div.onmousedown = div.ontouchstart = (e) => {
-                    if(e.target.classList.contains('edit-btn')) return;
-                    pressTimer = setTimeout(() => {
-                        if(confirm(`Vuoi eliminare il contatto "${chatObj.name}" (${chatObj.phone})?`)) {
-                            contacts = contacts.filter(c => c.phone !== chatObj.phone);
-                            saveContactsToLocalStorage();
-                            updateContactsDisplay();
-                        }
-                    }, 600);
-                };
-                div.onmouseup = div.ontouchend = div.onmouseleave = () => {
-                    clearTimeout(pressTimer);
-                };
-
+                div.innerHTML = `<div>${label}</div> <div style="color:#6c757d; font-size:13px; font-weight:bold;">Apri ➡</div>`;
+                div.onclick = () => openChat(chatObj);
                 container.appendChild(div);
             });
-        }
-
-        function editContactNameByPhone(phone) {
-            let contact = contacts.find(c => c.phone === phone);
-            if(!contact) return;
-
-            let newName = prompt(`Modifica il nome in rubrica per (${phone}):`, contact.name);
-            if(newName === null) return;
-
-            newName = newName.trim();
-            if(!newName) return;
-
-            contact.name = newName;
-            saveContactsToLocalStorage();
-            updateContactsDisplay();
-            if(currentChatContact && currentChatContact.phone === phone) {
-                currentChatContact.name = newName;
-                document.getElementById('chat-partner-name').innerText = newName;
-            }
         }
 
         function filterChats(val) { updateContactsDisplay(val); }
@@ -663,32 +801,37 @@
             updateContactsDisplay();
         }
 
-        function openChat(contact) {
-            let saved = contacts.find(c => c.phone === contact.phone);
-            if(saved) {
-                contact.email = saved.email || 'N/D';
-                contact.realName = saved.realName || contact.realName;
-            }
-
-            currentChatContact = contact;
-            document.getElementById('chat-partner-name').innerText = contact.name;
+        function openChat(chatObj) {
+            currentChatContact = chatObj;
+            document.getElementById('chat-partner-name').innerText = chatObj.name;
             
             const saveBtn = document.getElementById('quick-save-btn');
-            if(!contact.isSaved) {
-                saveBtn.style.display = 'block';
-            } else {
+            const infoBtn = document.getElementById('info-contact-btn');
+
+            if(chatObj.isGroup) {
                 saveBtn.style.display = 'none';
+                infoBtn.style.display = 'none';
+            } else {
+                infoBtn.style.display = 'block';
+                if(!chatObj.isSaved) {
+                    saveBtn.style.display = 'block';
+                } else {
+                    saveBtn.style.display = 'none';
+                }
             }
 
-            socket.emit('get_chat_history', { user1: currentUser.phone, user2: contact.phone });
+            socket.emit('get_chat_history', { 
+                user1: currentUser.phone, 
+                user2: chatObj.isGroup ? chatObj._id : chatObj.phone,
+                isGroup: !!chatObj.isGroup
+            });
 
             renderMessages();
             document.getElementById('active-chat-window').style.display = 'flex';
-            updateContactsDisplay();
         }
 
         function openContactInfoModal() {
-            if(!currentChatContact) return;
+            if(!currentChatContact || currentChatContact.isGroup) return;
             document.getElementById('modal-contact-nickname').innerText = currentChatContact.name || 'Non salvato';
             document.getElementById('modal-contact-username').innerText = currentChatContact.realName || currentChatContact.name;
             document.getElementById('modal-contact-phone').innerText = currentChatContact.phone;
@@ -696,27 +839,17 @@
             document.getElementById('contact-info-modal').style.display = 'flex';
         }
 
-        function closeContactInfoModal() {
-            document.getElementById('contact-info-modal').style.display = 'none';
-        }
-
         function quickSaveContact() {
             let customName = prompt("Inserisci il nome in rubrica per:", currentChatContact.phone);
             if(!customName) return;
 
-            let existing = contacts.find(c => c.phone === currentChatContact.phone);
-            if(existing) {
-                existing.name = customName;
-                existing.isSaved = true;
-            } else {
-                contacts.push({ 
-                    name: customName, 
-                    phone: currentChatContact.phone, 
-                    email: currentChatContact.email || 'N/D',
-                    realName: currentChatContact.realName || currentChatContact.phone,
-                    isSaved: true 
-                });
-            }
+            contacts.push({ 
+                name: customName, 
+                phone: currentChatContact.phone, 
+                email: currentChatContact.email || 'N/D',
+                realName: currentChatContact.realName || currentChatContact.phone,
+                isSaved: true 
+            });
 
             saveContactsToLocalStorage();
             currentChatContact.name = customName;
@@ -737,10 +870,13 @@
             const text = input.value.trim();
             if(!text || !currentChatContact || !currentUser) return;
 
+            const recipientId = currentChatContact.isGroup ? currentChatContact._id : currentChatContact.phone;
             const tempId = 'temp_' + Date.now();
+
             const msgData = {
                 sender: currentUser.phone,
-                recipient: currentChatContact.phone,
+                recipient: recipientId,
+                isGroup: !!currentChatContact.isGroup,
                 text: text,
                 tempId: tempId
             };
@@ -748,7 +884,8 @@
             const localMessagePayload = {
                 id: tempId,
                 sender: currentUser.phone,
-                recipient: currentChatContact.phone,
+                recipient: recipientId,
+                isGroup: !!currentChatContact.isGroup,
                 text: text,
                 status: 'local', 
                 timestamp: new Date()
@@ -774,191 +911,156 @@
             box.innerHTML = '';
             if(!currentChatContact || !currentUser) return;
 
-            const pPhone = currentChatContact.phone;
+            const targetId = currentChatContact.isGroup ? currentChatContact._id : currentChatContact.phone;
 
             const chatMessages = messages.filter(m => {
-                const isFromMe = (m.sender === currentUser.phone);
-                const isToMe = (m.recipient === currentUser.phone);
-                const isToPartner = (m.recipient === pPhone);
-                const isFromPartner = (m.sender === pPhone);
-
-                return (isFromMe && isToPartner) || (isFromPartner && isToMe);
+                if(currentChatContact.isGroup) {
+                    return m.recipient === targetId && m.isGroup;
+                } else {
+                    const isFromMe = (m.sender === currentUser.phone && m.recipient === targetId);
+                    const isToMe = (m.sender === targetId && m.recipient === currentUser.phone);
+                    return isFromMe || isToMe;
+                }
             });
-
-            let lastDateString = null;
 
             chatMessages.forEach(msg => {
                 const msgDate = new Date(msg.timestamp || Date.now());
-                const todayStr = new Date().toLocaleDateString();
-                const msgDateStr = msgDate.toLocaleDateString();
-                
-                let dateDividerLabel = msgDateStr;
-                if (msgDateStr === todayStr) {
-                    dateDividerLabel = "Oggi";
-                }
-
-                if (dateDividerLabel !== lastDateString) {
-                    lastDateString = dateDividerLabel;
-                    const dateDiv = document.createElement('div');
-                    dateDiv.style.textAlign = "center";
-                    dateDiv.style.margin = "15px 0 10px 0";
-                    dateDiv.innerHTML = `<span style="background: rgba(0,0,0,0.1); color: #495057; padding: 4px 10px; border-radius: 8px; font-size: 11px; font-weight: bold;">${dateDividerLabel}</span>`;
-                    box.appendChild(dateDiv);
-                }
-
                 const isSent = (msg.sender === currentUser.phone);
                 const bubble = document.createElement('div');
                 bubble.className = 'message-bubble ' + (isSent ? 'sent' : 'received');
                 
+                if(currentChatContact.isGroup && !isSent) {
+                    let senderLabel = document.createElement('div');
+                    senderLabel.className = 'message-sender-name';
+                    senderLabel.innerText = getDisplayName(msg.sender);
+                    bubble.appendChild(senderLabel);
+                }
+
                 let textDiv = document.createElement('div');
                 textDiv.innerText = msg.text;
                 bubble.appendChild(textDiv);
 
                 let footer = document.createElement('div');
                 footer.className = 'message-footer';
-                
                 let timeStr = msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                let timeSpan = document.createElement('span');
-                timeSpan.innerText = timeStr;
-                footer.appendChild(timeSpan);
-
-                if(isSent) {
-                    let ticksSpan = document.createElement('span');
-                    ticksSpan.className = 'status-ticks';
-                    let st = msg.status || 'sent';
-                    if(st === 'local') {
-                        ticksSpan.innerHTML = '—';
-                        ticksSpan.className += ' gray';
-                    } else if(st === 'sent') {
-                        ticksSpan.innerHTML = '✓';
-                        ticksSpan.className += ' gray';
-                    } else if(st === 'delivered') {
-                        ticksSpan.innerHTML = '✓✓';
-                        ticksSpan.className += ' gray';
-                    } else if(st === 'read') {
-                        ticksSpan.innerHTML = '✓✓';
-                        ticksSpan.className += ' blue';
-                    }
-                    footer.appendChild(ticksSpan);
-                }
-
+                footer.innerHTML = `<span>${timeStr}</span>`;
                 bubble.appendChild(footer);
-
-                if(isSent) {
-                    let msgTimer;
-                    bubble.onmousedown = bubble.ontouchstart = () => {
-                        msgTimer = setTimeout(() => {
-                            if(confirm("Vuoi eliminare questo messaggio?")) {
-                                messages = messages.filter(m => (m.id !== msg.id && m._id !== msg.id));
-                                renderMessages();
-                                updateContactsDisplay();
-                            }
-                        }, 600);
-                    };
-                    bubble.onmouseup = bubble.ontouchend = bubble.onmouseleave = () => {
-                        clearTimeout(msgTimer);
-                    };
-                }
 
                 box.appendChild(bubble);
             });
             box.scrollTop = box.scrollHeight;
         }
 
-        // --- GESTIONE CHIAMATE E REGISTRO ---
+        // --- GESTIONE CHIAMATE E MULTI-UTENTE ---
 
-        async function startCall(callType) {
+        function startDirectCall(callType) {
             if(!currentChatContact) return;
-            isCaller = true;
-            activeCallPartner = currentChatContact.phone;
-            activeCallType = callType;
-            callStatusState = 'red'; // Default se fallisce l'invio al server
+            let targets = [];
+            if(currentChatContact.isGroup) {
+                currentChatContact.members.forEach(m => {
+                    if(m !== currentUser.phone) targets.push(m);
+                });
+                startCallProcess(targets, callType, true, currentChatContact._id);
+            } else {
+                targets.push(currentChatContact.phone);
+                startCallProcess(targets, callType, false, null);
+            }
+        }
 
-            document.getElementById('call-partner-label').innerText = `A: ${currentChatContact.name}`;
+        async function startCallProcess(targets, callType, isGroup, groupId) {
+            activeCallType = callType;
+            activeCallIsGroup = isGroup;
+
+            document.getElementById('call-partner-label').innerText = isGroup ? "Chiamata di Gruppo" : `A: ${getDisplayName(targets[0])}`;
             document.getElementById('call-status-text').innerText = "Connessione in corso...";
-            document.getElementById('call-timer-display').style.display = 'none';
-            document.getElementById('answer-call-btn').style.display = 'none';
             document.getElementById('call-window').style.display = 'flex';
 
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
+                    audio: true, 
                     video: callType === 'video' ? { width: { ideal: 640 }, height: { ideal: 480 } } : false 
                 });
-                
                 document.getElementById('local-video').srcObject = localStream;
-                createPeerConnection();
-                localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-                const offer = await peerConnection.createOffer();
-                await peerConnection.setLocalDescription(offer);
-
-                socket.emit('call_user', {
-                    fromPhone: currentUser.phone,
-                    fromName: currentUser.name,
-                    toIdentifier: currentChatContact.phone,
-                    signal: offer,
-                    callType: callType
-                }, (response) => {
-                    if (response && !response.success) {
-                        callStatusState = 'red';
-                        alert(response.message || "Destinatario non raggiungibile");
-                        closeCallWindow();
-                    }
+                socket.emit('start_call', {
+                    initiatorPhone: currentUser.phone,
+                    initiatorName: currentUser.name,
+                    targets: targets,
+                    callType: callType,
+                    isGroup: isGroup,
+                    groupId: groupId
+                }, (res) => {
+                    if(res && res.callId) activeCallId = res.callId;
                 });
 
-                // Timeout di squillo (se non risponde nessuno dopo 25 secondi)
-                ringTimeout = setTimeout(() => {
-                    if(callStatusState === 'red' || callStatusState === 'yellow') {
-                        callStatusState = 'yellow'; // Nessuno ha risposto, eliminato dal mittente
-                        socket.emit('hang_up', { toIdentifier: currentChatContact.phone });
-                        closeCallWindow();
-                    }
-                }, 25000);
-
-            } catch (err) {
-                callStatusState = 'gray'; // Errore hardware/connessione inizializzazione
-                alert("Impossibile accedere a microfono o fotocamera.");
+                startCallTimer();
+            } catch(e) {
+                alert("Impossibile accedere a microfono/fotocamera.");
                 closeCallWindow();
             }
         }
 
         async function acceptIncomingCall() {
-            if(ringTimeout) clearTimeout(ringTimeout);
             document.getElementById('answer-call-btn').style.display = 'none';
-            document.getElementById('call-status-text').innerText = "Connessione in corso...";
+            document.getElementById('call-status-text').innerText = "Chiamata in corso";
 
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
-                    video: incomingCallData.callType === 'video' ? { width: { ideal: 640 }, height: { ideal: 480 } } : false 
+                    audio: true, 
+                    video: activeCallType === 'video' ? { width: { ideal: 640 }, height: { ideal: 480 } } : false 
                 });
-                
                 document.getElementById('local-video').srcObject = localStream;
-                createPeerConnection();
-                localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingCallData.signal));
-                const answer = await peerConnection.createAnswer();
-                await peerConnection.setLocalDescription(answer);
+                // Connettiti all'iniziatore o ai partecipanti
+                if(incomingCallPayload) {
+                    let pc = createPeerConnectionForUser(incomingCallPayload.initiatorPhone);
+                    const offer = incomingCallPayload.signal; // se presente o gestito via peer
+                }
 
-                socket.emit('answer_call', {
-                    toIdentifier: incomingCallData.fromPhone,
-                    signal: answer
-                });
-
-                startCallTimerAndGreenState();
-            } catch (err) {
-                callStatusState = 'gray';
+                startCallTimer();
+            } catch(e) {
                 closeCallWindow();
             }
         }
 
-        function startCallTimerAndGreenState() {
-            if(ringTimeout) clearTimeout(ringTimeout);
-            callStatusState = 'green'; // Risposto, chiamata in svolgimento
-            document.getElementById('call-status-text').innerText = "Chiamata in corso";
-            
+        function createPeerConnectionForUser(remotePhone) {
+            if(peerConnections[remotePhone]) return peerConnections[remotePhone];
+
+            const pc = new RTCPeerConnection(rtcConfig);
+            peerConnections[remotePhone] = pc;
+
+            if(localStream) {
+                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            }
+
+            pc.onicecandidate = (event) => {
+                if(event.candidate) {
+                    socket.emit('call_signal', { toIdentifier: remotePhone, signal: event.candidate });
+                }
+            };
+
+            pc.ontrack = (event) => {
+                let container = document.getElementById('call-videos-container');
+                let videoId = 'remote_video_' + remotePhone;
+                let vElem = document.getElementById(videoId);
+                if(!vElem) {
+                    let wrap = document.createElement('div');
+                    wrap.className = 'remote-video-container';
+                    wrap.id = 'wrap_' + videoId;
+                    wrap.innerHTML = `<video id="${videoId}" autoplay playsinline></video><div class="remote-video-label">${getDisplayName(remotePhone)}</div>`;
+                    container.appendChild(wrap);
+                    vElem = document.getElementById(videoId);
+                }
+                if(event.streams && event.streams[0]) {
+                    vElem.srcObject = event.streams[0];
+                    vElem.play().catch(e => {});
+                }
+            };
+
+            return pc;
+        }
+
+        function startCallTimer() {
             const timerDisplay = document.getElementById('call-timer-display');
             timerDisplay.style.display = 'block';
             callSecondsElapsed = 0;
@@ -973,79 +1075,29 @@
             }, 1000);
         }
 
-        function createPeerConnection() {
-            if (peerConnection) peerConnection.close();
-            peerConnection = new RTCPeerConnection(rtcConfig);
-
-            peerConnection.onicecandidate = (event) => {
-                if(event.candidate) {
-                    let targetIdentifier = currentChatContact ? currentChatContact.phone : (incomingCallData ? incomingCallData.fromPhone : null);
-                    if(targetIdentifier) {
-                        socket.emit('ice_candidate', { toIdentifier: targetIdentifier, signal: event.candidate });
-                    }
-                }
-            };
-
-            peerConnection.ontrack = (event) => {
-                const remoteVideo = document.getElementById('remote-video');
-                if (event.streams && event.streams[0]) {
-                    remoteVideo.srcObject = event.streams[0];
-                    remoteVideo.muted = false;
-                    remoteVideo.play().catch(e => {});
-                }
-            };
-        }
-
         function endCall() {
-            let targetIdentifier = currentChatContact ? currentChatContact.phone : (incomingCallData ? incomingCallData.fromPhone : null);
-            if(targetIdentifier) socket.emit('hang_up', { toIdentifier: targetIdentifier });
-            
-            // Se eravamo in squillo senza risposta come mittente
-            if(isCaller && callStatusState === 'red') {
-                callStatusState = 'yellow';
-            }
+            socket.emit('hang_up_call', { callId: activeCallId });
             closeCallWindow();
         }
 
         function closeCallWindow() {
-            if(ringTimeout) clearTimeout(ringTimeout);
             if(callTimerInterval) {
                 clearInterval(callTimerInterval);
                 callTimerInterval = null;
             }
+            if(localStream) localStream.getTracks().forEach(t => t.stop());
+            
+            Object.values(peerConnections).forEach(pc => pc.close());
+            peerConnections = {};
 
-            if(localStream) localStream.getTracks().forEach(track => track.stop());
-            if(peerConnection) { peerConnection.close(); peerConnection = null; }
-
-            // Salva nel registro chiamate se c'è un partner valido
-            let partnerPhone = activeCallPartner || (currentChatContact ? currentChatContact.phone : (incomingCallData ? incomingCallData.fromPhone : null));
-            if(partnerPhone && currentUser) {
-                let formattedDuration = "00:00";
-                if(callSecondsElapsed > 0) {
-                    let mins = Math.floor(callSecondsElapsed / 60);
-                    let secs = callSecondsElapsed % 60;
-                    formattedDuration = `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
-                }
-
-                callLogs.push({
-                    partnerPhone: partnerPhone,
-                    callType: activeCallType,
-                    status: callStatusState,
-                    duration: formattedDuration,
-                    timestamp: new Date()
-                });
-                saveCallsToLocalStorage();
-                updateCallLogDisplay();
-            }
-
+            document.querySelectorAll('.remote-video-container').forEach(el => el.remove());
             document.getElementById('call-window').style.display = 'none';
             document.getElementById('local-video').srcObject = null;
-            document.getElementById('remote-video').srcObject = null;
             document.getElementById('call-timer-display').style.display = 'none';
-            incomingCallData = null;
-            activeCallPartner = null;
+            activeCallId = null;
+            incomingCallPayload = null;
             callSecondsElapsed = 0;
-            callStatusState = 'gray';
+            loadCallLogsFromServer();
         }
 
         function updateCallLogDisplay() {
@@ -1057,34 +1109,29 @@
                 return;
             }
 
-            // Ordine cronologico decrescente (dal più recente) o crescente base
-            let sortedLogs = [...callLogs].reverse();
-
             container.innerHTML = '';
-            sortedLogs.forEach(log => {
-                let contactObj = contacts.find(c => c.phone === log.partnerPhone);
-                let displayName = contactObj ? contactObj.name : log.partnerPhone;
+            callLogs.forEach(log => {
                 let callTypeLabel = log.callType === 'video' ? 'Videochiamata' : 'Chiamata audio';
-                
                 let dateObj = new Date(log.timestamp);
                 let dateStr = dateObj.toLocaleDateString();
                 let timeStr = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-                let dotClass = 'dot-gray';
-                let statusDescription = 'Errore / Non partita';
-                if(log.status === 'red') { dotClass = 'dot-red'; statusDescription = 'Non arrivata al destinatario'; }
-                else if(log.status === 'orange') { dotClass = 'dot-orange'; statusDescription = 'Rifiutata'; }
-                else if(log.status === 'yellow') { dotClass = 'dot-yellow'; statusDescription = 'Nessuna risposta / Annullata'; }
-                else if(log.status === 'green') { dotClass = 'dot-green'; statusDescription = `Svolta (${log.duration})`; }
+                let titleLabel = '';
+                if(log.isGroup) {
+                    titleLabel = `Chiamata di gruppo, avviata da: ${log.initiatorName}`;
+                } else {
+                    let otherParticipant = log.participants.find(p => p.phone !== currentUser.phone);
+                    titleLabel = otherParticipant ? getDisplayName(otherParticipant.phone) : log.initiatorName;
+                }
 
                 const div = document.createElement('div');
                 div.className = 'call-log-item';
                 div.innerHTML = `
                     <div style="display:flex; align-items:center; gap:10px;">
-                        <span class="call-dot ${dotClass}" title="${statusDescription}"></span>
+                        <span class="call-dot dot-green"></span>
                         <div>
-                            <b style="color: #212529; font-size: 15px;">${displayName}</b>
-                            <div style="font-size: 12px; color: #6c757d; font-weight: normal;">${callTypeLabel} - ${statusDescription}</div>
+                            <b style="color: #212529; font-size: 15px;">${titleLabel}</b>
+                            <div style="font-size: 12px; color: #6c757d; font-weight: normal;">${callTypeLabel} - Svolta</div>
                         </div>
                     </div>
                     <div style="text-align: right; font-size: 12px; color: #495057;">
@@ -1092,6 +1139,19 @@
                         <div style="font-weight: normal; color: #6c757d;">${timeStr}</div>
                     </div>
                 `;
+
+                div.onclick = () => {
+                    // Apri modale dettagli partecipanti se cliccato
+                    const pList = document.getElementById('call-participants-list');
+                    pList.innerHTML = '';
+                    log.participants.forEach(p => {
+                        let row = document.createElement('div');
+                        row.innerText = `• ${getDisplayName(p.phone)} (${p.phone})`;
+                        pList.appendChild(row);
+                    });
+                    document.getElementById('call-details-modal').style.display = 'flex';
+                };
+
                 container.appendChild(div);
             });
         }
