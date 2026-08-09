@@ -1,5 +1,5 @@
 const express = require('express');
-const http = http = require('http'); 
+const http = require('http'); 
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -497,7 +497,6 @@ io.on('connection', (socket) => {
             const currentSocket = activeUsers.get(socket.userPhone);
             if (currentSocket === socket.id) {
                 activeUsers.delete(socket.userPhone);
-                // Aggiorna eventuali chiamate pendenti aperte a missed/unreachable se l'utente si scollega improvvisamente
                 await CallLog.updateMany(
                     { status: 'pending', $or: [{ initiatorPhone: socket.userPhone }, { "participants.phone": socket.userPhone }] },
                     { $set: { status: 'missed' } }
