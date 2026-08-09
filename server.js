@@ -39,10 +39,10 @@ const User = mongoose.model('User', userSchema);
 
 const messageSchema = new mongoose.Schema({
     sender: String,
-    recipient: String, // Può essere il numero di un utente o l'ID di un gruppo
+    recipient: String,
     isGroup: { type: Boolean, default: false },
     text: String,
-    status: { type: String, default: 'sent' },
+    status: { type: String, default: 'sent' }, // sent, delivered, read
     timestamp: { type: Date, default: Date.now }
 });
 const Message = mongoose.model('Message', messageSchema);
@@ -50,17 +50,18 @@ const Message = mongoose.model('Message', messageSchema);
 const groupSchema = new mongoose.Schema({
     name: { type: String, required: true },
     description: { type: String, default: '' },
-    admin: { type: String, required: true }, // Telefono del creatore
-    members: [{ type: String }] // Array di numeri di telefono dei membri
+    admin: { type: String, required: true },
+    members: [{ type: String }]
 });
 const Group = mongoose.model('Group', groupSchema);
 
 const callLogSchema = new mongoose.Schema({
-    callType: String, // 'audio' o 'video'
+    callType: String,
     isGroup: { type: Boolean, default: false },
     initiatorPhone: String,
     initiatorName: String,
     participants: [{ phone: String, name: String }],
+    status: { type: String, default: 'completed' }, // completed, declined
     timestamp: { type: Date, default: Date.now }
 });
 const CallLog = mongoose.model('CallLog', callLogSchema);
@@ -97,9 +98,15 @@ io.on('connection', (socket) => {
 
             const pending = await Message.find({ recipient: user.phone, status: 'sent', isGroup: false });
             for (let msg of pending) {
-                socket.emit('receive_message', msg);
                 msg.status = 'delivered';
                 await msg.save();
+                socket.emit('receive_message', msg);
+                
+                // Notifica mittente dell'avvenuta consegna
+                const senderSocketId = activeUsers.get(msg.sender);
+                if (senderSocketId) {
+                    io.to(senderSocketId).emit('message_status_update', { messageId: msg._id, status: 'delivered' });
+                }
             }
         } catch (err) {
             console.error("Errore registrazione:", err);
@@ -121,9 +128,14 @@ io.on('connection', (socket) => {
 
                 const pending = await Message.find({ recipient: user.phone, status: 'sent', isGroup: false });
                 for (let msg of pending) {
-                    socket.emit('receive_message', msg);
                     msg.status = 'delivered';
                     await msg.save();
+                    socket.emit('receive_message', msg);
+
+                    const senderSocketId = activeUsers.get(msg.sender);
+                    if (senderSocketId) {
+                        io.to(senderSocketId).emit('message_status_update', { messageId: msg._id, status: 'delivered' });
+                    }
                 }
             } else {
                 socket.emit('registration_error', 'Utente non trovato.');
@@ -155,7 +167,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- GESTIONE GRUPPI ---
     socket.on('create_group', async (data, callback) => {
         try {
             const { name, description, members, admin } = data;
@@ -185,7 +196,6 @@ io.on('connection', (socket) => {
             });
 
             io.to(newGroup._id.toString()).emit('group_created', newGroup);
-
             callback({ success: true, group: newGroup });
         } catch (err) {
             console.error("Errore creazione gruppo:", err);
@@ -203,7 +213,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- GESTIONE MESSAGGI ---
     socket.on('send_message', async (msgData, callback) => {
         try {
             const { sender, recipient, text, isGroup, tempId } = msgData;
@@ -250,6 +259,24 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('mark_messages_read', async (data) => {
+        try {
+            const { userPhone, chatPartnerId, isGroup } = data;
+            let query = isGroup ? { recipient: chatPartnerId, isGroup: true } : { sender: chatPartnerId, recipient: userPhone, isGroup: false };
+
+            await Message.updateMany({ ...query, status: { $ne: 'read' } }, { $set: { status: 'read' } });
+
+            if (!isGroup) {
+                const senderSocketId = activeUsers.get(chatPartnerId);
+                if (senderSocketId) {
+                    io.to(senderSocketId).emit('messages_read_receipt', { readerPhone: userPhone });
+                }
+            }
+        } catch (err) {
+            console.error("Errore aggiornamento stato lettura:", err);
+        }
+    });
+
     socket.on('get_chat_history', async (data) => {
         try {
             const { user1, user2, isGroup } = data;
@@ -293,7 +320,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- GESTIONE CHIAMATE ---
+    // --- GESTIONE CHIAMATE WEBRTC ---
     socket.on('start_call', async (data) => {
         try {
             let participantsList = [{ phone: data.initiatorPhone, name: data.initiatorName }];
@@ -305,11 +332,6 @@ io.on('connection', (socket) => {
                         participantsList.push({ phone: t.phone, name: t.name });
                     }
                 });
-                data.targets.forEach(targetPhone => {
-                    if (!participantsList.some(p => p.phone === targetPhone)) {
-                        participantsList.push({ phone: targetPhone, name: targetPhone });
-                    }
-                });
             }
 
             const callLog = new CallLog({
@@ -317,7 +339,8 @@ io.on('connection', (socket) => {
                 isGroup: data.isGroup,
                 initiatorPhone: data.initiatorPhone,
                 initiatorName: data.initiatorName,
-                participants: participantsList
+                participants: participantsList,
+                status: 'completed'
             });
             await callLog.save();
 
@@ -336,18 +359,6 @@ io.on('connection', (socket) => {
                         });
                     }
                 });
-            }
-
-            if (data.isGroup && data.groupId) {
-                const callMsg = new Message({
-                    sender: data.initiatorPhone,
-                    recipient: data.groupId,
-                    isGroup: true,
-                    text: `📞 ${data.initiatorName} ha avviato una ${data.callType === 'video' ? 'videochiamata' : 'chiamata'} di gruppo.`,
-                    status: 'delivered'
-                });
-                await callMsg.save();
-                io.to(data.groupId).emit('receive_message', callMsg);
             }
 
             socket.emit('call_initiated', { callId: callLog._id });
@@ -386,12 +397,14 @@ io.on('connection', (socket) => {
         }
     });
 
-    // AGGIUNTA: Gestione del rifiuto della chiamata
-    socket.on('call_declined', (data) => {
+    socket.on('call_declined', async (data) => {
+        if (data && data.callId) {
+            await CallLog.findByIdAndUpdate(data.callId, { status: 'declined' });
+        }
         if (data && data.toIdentifier) {
             const recipientSocketId = activeUsers.get(data.toIdentifier);
             if (recipientSocketId) {
-                io.to(recipientSocketId).emit('call_declined', { fromPhone: data.fromPhone });
+                io.to(recipientSocketId).emit('call_declined', { fromPhone: data.fromPhone, userName: data.userName });
             }
         }
     });
@@ -431,4 +444,3 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Server avviato sulla porta ${PORT}`);
 });
-
