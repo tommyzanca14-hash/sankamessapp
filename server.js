@@ -33,7 +33,13 @@ mongoose.connect(MONGO_URI || "mongodb://localhost:27017/omega7", {
 const userSchema = new mongoose.Schema({
     name: { type: String, required: true, trim: true },
     phone: { type: String, required: true, unique: true, trim: true },
-    email: { type: String, required: true, trim: true }
+    email: { type: String, required: true, trim: true },
+    savedContacts: [
+        {
+            contactId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+            customName: { type: String, required: true, trim: true }
+        }
+    ]
 });
 const User = mongoose.model('User', userSchema);
 
@@ -68,7 +74,6 @@ const CallLog = mongoose.model('CallLog', callLogSchema);
 
 const activeUsers = new Map(); // phone -> Set di socket.id
 
-// Funzione d'appoggio per registrare in modo sicuro un utente online
 const registerSocketUser = (phone, socketInstance) => {
     let cleanPhone = phone.trim();
     if (!activeUsers.has(cleanPhone)) {
@@ -78,6 +83,62 @@ const registerSocketUser = (phone, socketInstance) => {
     socketInstance.userPhone = cleanPhone;
     console.log(`Utente registrato online: ${cleanPhone} (Socket ID: ${socketInstance.id})`);
 };
+
+// Rotte REST per la gestione contatti lato server
+app.post('/api/contacts/save', async (req, res) => {
+    try {
+        const { userPhone, contactPhone, customName } = req.body;
+        if (!userPhone || !contactPhone || !customName) {
+            return res.status(400).json({ success: false, message: "Dati mancanti." });
+        }
+        const user = await User.findOne({ phone: userPhone });
+        const targetUser = await User.findOne({ phone: contactPhone });
+
+        if (!user || !targetUser) {
+            return res.status(404).json({ success: false, message: "Utente non trovato." });
+        }
+
+        const existingIndex = user.savedContacts.findIndex(c => c.contactId.toString() === targetUser._id.toString());
+        if (existingIndex !== -1) {
+            user.savedContacts[existingIndex].customName = customName;
+        } else {
+            user.savedContacts.push({ contactId: targetUser._id, customName });
+        }
+
+        await user.save();
+        res.json({ success: true, savedContacts: user.savedContacts });
+    } catch (err) {
+        console.error("Errore salvataggio contatto:", err);
+        res.status(500).json({ success: false, message: "Errore interno del server." });
+    }
+});
+
+app.post('/api/contacts/update', async (req, res) => {
+    try {
+        const { userPhone, contactPhone, customName } = req.body;
+        const user = await User.findOne({ phone: userPhone }).populate('savedContacts.contactId');
+        if (!user) return res.status(404).json({ success: false, message: "Utente non trovato." });
+
+        let found = false;
+        for (let item of user.savedContacts) {
+            if (item.contactId && item.contactId.phone === contactPhone) {
+                item.customName = customName;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            return res.status(404).json({ success: false, message: "Contatto non trovato nella rubrica." });
+        }
+
+        await user.save();
+        res.json({ success: true, savedContacts: user.savedContacts });
+    } catch (err) {
+        console.error("Errore aggiornamento contatto:", err);
+        res.status(500).json({ success: false, message: "Errore interno del server." });
+    }
+});
 
 io.on('connection', (socket) => {
     console.log('Un utente si è connesso:', socket.id);
@@ -95,7 +156,7 @@ io.on('connection', (socket) => {
 
             let user = await User.findOne({ phone: cleanPhone });
             if (!user) {
-                user = new User({ name: cleanName, phone: cleanPhone, email: cleanEmail });
+                user = new User({ name: cleanName, phone: cleanPhone, email: cleanEmail, savedContacts: [] });
                 await user.save();
             } else {
                 user.name = cleanName;
@@ -128,7 +189,7 @@ io.on('connection', (socket) => {
     socket.on('login_user', async (data) => {
         try {
             if (!data || !data.phone) return;
-            let user = await User.findOne({ phone: data.phone.trim() });
+            let user = await User.findOne({ phone: data.phone.trim() }).populate('savedContacts.contactId');
             if (user) {
                 registerSocketUser(user.phone, socket);
                 socket.emit('login_success', user);
@@ -240,7 +301,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- INVIO MESSAGGIO OTTIMIZZATO IN PARALLELO ---
     socket.on('send_message', async (msgData, callback) => {
         try {
             const { sender, recipient, text, isGroup, tempId } = msgData;
@@ -263,7 +323,6 @@ io.on('connection', (socket) => {
                 timestamp: timestamp
             };
 
-            // 1. SPEDIZIONE ISTANTANEA VIA WEBSOCKET (Zero attese)
             if (isGroup) {
                 io.to(recipient).emit('receive_message', messagePayload);
             } else if (isOnline) {
@@ -272,12 +331,10 @@ io.on('connection', (socket) => {
                 });
             }
 
-            // 2. RISPOSTA IMMEDIATA AL MITTENTE
             if (typeof callback === 'function') {
                 callback({ success: true, message: messagePayload, tempId });
             }
 
-            // 3. SALVATAGGIO SU MONGODB IN BACKGROUND (Non blocca la consegna)
             const newMessage = new Message({
                 _id: messageId,
                 sender,
@@ -298,7 +355,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- AGGIORNAMENTO STATO LETTURA (SPUNTE BLU) ---
     socket.on('mark_messages_read', async (data) => {
         try {
             const { userPhone, chatPartnerId, isGroup } = data;
@@ -362,7 +418,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- GESTIONE CHIAMATE WEBRTC ---
     socket.on('check_user_availability', async (data, callback) => {
         const targetPhone = data.targetPhone ? data.targetPhone.trim() : '';
         const targetSockets = activeUsers.get(targetPhone);
